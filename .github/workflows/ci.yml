@@ -43,6 +43,22 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: lint install.sh
         run: shellcheck -e SC1091,SC2002,SC2015,SC2155,SC2207,SC2317,SC2034,SC2287,SC2188,SC2329 install.sh
+      - name: lint scripts/smoke.sh
+        run: shellcheck scripts/smoke.sh
+
+  smoke:
+    name: smoke (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: build release
+        run: cargo build --release --locked
+      - name: install dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3 curl
+      - name: run smoke.sh
+        run: scripts/smoke.sh
 
   skill-validate:
     name: skill validator

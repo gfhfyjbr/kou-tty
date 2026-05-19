@@ -93,6 +93,46 @@ Supported targets:
 
 Env overrides: `KOU_TTY_REPO`, `KOU_TTY_VERSION`, `KOU_TTY_SKILL_REF`, `KOU_TTY_INSTALL_DIR`, `KOU_TTY_SKILLS_DIR`, `CODEX_HOME`.
 
+## Testing
+
+| Layer | Command | What it covers |
+| --- | --- | --- |
+| Unit + lib integration | `cargo test --release` | `Grid` ops, ANSI/VT parser via real `vte`, key encoding, real PTY spawn (`Emulator::spawn` → echo a marker → assert in `grid.plain_text()`) |
+| CLI integration | `cargo test --release --test cli` | Spawns the actual `target/release/kou-tty` binary, talks to the auto-spawned daemon over an isolated socket, asserts JSON responses |
+| End-to-end shell | `scripts/smoke.sh` | 18 sequential CLI steps: create / send-keys / show / status / read / region / events / resize / json bridge / list / viewer HTTP / destroy / unknown-id error |
+
+Examples:
+
+```sh
+# everything: 26 tests in 4 binaries
+cargo test --release
+
+# only the CLI integration suite
+cargo test --release --test cli
+
+# black-box shell test against the built binary
+cargo build --release
+scripts/smoke.sh
+```
+
+Manual one-liners while developing:
+
+```sh
+ID=$(./target/release/kou-tty create --size 80x24 | jq -r .result.id)
+./target/release/kou-tty send-keys "$ID" '[{"text":"echo hi"},{"key":"Enter"}]'
+sleep 0.2
+./target/release/kou-tty show "$ID"
+./target/release/kou-tty destroy "$ID"
+./target/release/kou-tty shutdown
+```
+
+JSON-RPC bridge (no subcommands, one request per line):
+
+```sh
+printf '{"method":"ping"}\n{"method":"terminal_list"}\n' \
+  | ./target/release/kou-tty json
+```
+
 ## CI / Release
 
 - `.github/workflows/ci.yml` — runs on every push/PR: `cargo build --release`, `cargo test`, `cargo +nightly fmt -- --check`, shellcheck, and a Python skill-frontmatter validator.
