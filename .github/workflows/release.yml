@@ -37,9 +37,6 @@ jobs:
             target: aarch64-unknown-linux-gnu
             asset: kou-tty-linux-arm64
             cross: true
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            asset: kou-tty-windows-x64.exe
     steps:
       - uses: actions/checkout@v4
 
