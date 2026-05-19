@@ -80,6 +80,15 @@ Result:
 { "id": "ab", "rows": 40, "cols": 120 }
 ```
 
+### `terminal_destroy`
+
+```json
+{ "method": "terminal_destroy",
+  "params": { "id": "ab", "if_exists": true } }
+```
+
+`if_exists` defaults to `false`. When `true`, a missing terminal still returns `{ "ok": true, "result": { "destroyed": "ab", "missing": true } }` instead of `not_found`.
+
 ### `terminal_send_keys`
 
 ```json
@@ -155,18 +164,22 @@ Result: `{ "events": [ ... ] }` — drains up to `max` events from the ring buff
 
 ## Error codes
 
-| Code | Meaning |
-| --- | --- |
-| `bad_request` | Malformed JSON or wrong shape |
-| `bad_size` | Unrecognised size string |
-| `bad_key` | Unknown key name in `send-key` / `send-keys` |
-| `not_found` | Terminal `id` does not exist |
-| `create_failed` | PTY spawn or shell exec failed |
-| `write_failed` | PTY write failed (terminal dead?) |
-| `resize_failed` | PTY ioctl failed |
-| `viewer_failed` | Bind / start failed |
-| `shutdown` | Daemon acknowledging shutdown (this is returned then connection closes) |
-| `internal` | Unexpected panic captured in `spawn_blocking` |
+`ok=false` responses carry an `error` object with `code`, `message`, and an optional `suggestion`. Each code also maps to a POSIX exit code on the CLI:
+
+| Code | Exit | Meaning |
+| --- | --- | --- |
+| `bad_request` | 2 | Malformed JSON or wrong shape |
+| `bad_size` | 2 | Unrecognised size string |
+| `bad_key` | 2 | Unknown key name in `send-key` / `send-keys` |
+| `not_found` | 3 | Terminal `id` does not exist (suggestion points to `terminal list`) |
+| `conflict` / `already_exists` | 5 | Resource already in the requested state |
+| `create_failed` | 1 | PTY spawn or shell exec failed |
+| `write_failed` | 1 | PTY write failed (terminal dead?) |
+| `resize_failed` | 1 | PTY ioctl failed |
+| `viewer_failed` | 1 | Bind / start failed (suggestion suggests another `--port`) |
+| `internal` | 1 | Unexpected panic captured in `spawn_blocking` |
+
+`shutdown` is no longer an error — the daemon now responds with `{ "ok": true, "result": { "shutdown": true } }`, exit 0.
 
 ## Event payloads
 

@@ -5,51 +5,179 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::daemon::{DaemonClient, default_socket_path, run as run_daemon};
-use crate::protocol::{KeyInput, MouseAction, ReadMode, Request, Size};
+use crate::protocol::{ApiResponse, KeyInput, MouseAction, ReadMode, Request, Size, exit_code_for};
 
-use super::{Cli, Command, ViewerCommand};
+use super::{Cli, Command, TerminalCommand, ViewerCommand};
 
 pub async fn dispatch(cli: Cli) -> Result<()> {
     let socket = cli.socket.clone().unwrap_or_else(default_socket_path);
+    let quiet = cli.quiet;
+    let compact = cli.compact;
     match cli.command {
         Command::Daemon => run_daemon(&socket).await,
         Command::Json => run_json_bridge(&socket).await,
         Command::Repl => run_repl(&socket).await,
-        cmd => run_client_command(&socket, cmd).await,
+        cmd => run_client_command(&socket, cmd, quiet, compact).await,
     }
 }
 
-async fn run_client_command(socket: &PathBuf, cmd: Command) -> Result<()> {
+async fn run_client_command(
+    socket: &PathBuf,
+    cmd: Command,
+    quiet: bool,
+    compact: bool,
+) -> Result<()> {
     let client = DaemonClient::new(socket.clone());
-    let request = build_request(cmd)?;
+    let request = build_request(&cmd)?;
     let response = client.send(&request).await?;
-    let pretty = serde_json::to_string_pretty(&response)?;
-    println!("{pretty}");
-    if !response.ok {
-        std::process::exit(1);
+
+    write_stdout(&response, &cmd, quiet, compact)?;
+    write_stderr_on_error(&response);
+
+    let code = exit_code_for(&response);
+    if code != 0 {
+        std::process::exit(code);
     }
     Ok(())
 }
 
-fn build_request(cmd: Command) -> Result<Request> {
+fn write_stdout(response: &ApiResponse, cmd: &Command, quiet: bool, compact: bool) -> Result<()> {
+    if quiet {
+        let bare = quiet_value(response, cmd);
+        if !bare.is_empty() {
+            println!("{bare}");
+        }
+        return Ok(());
+    }
+    if compact {
+        println!("{}", serde_json::to_string(response)?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(response)?);
+    }
+    Ok(())
+}
+
+fn write_stderr_on_error(response: &ApiResponse) {
+    if response.ok {
+        return;
+    }
+    let Some(err) = response.error.as_ref() else {
+        return;
+    };
+    eprintln!("error[{}]: {}", err.code, err.message);
+    if let Some(hint) = &err.suggestion {
+        eprintln!("hint: {hint}");
+    }
+}
+
+fn quiet_value(response: &ApiResponse, cmd: &Command) -> String {
+    if !response.ok {
+        return String::new();
+    }
+    let Some(result) = response.result.as_ref() else {
+        return String::new();
+    };
+    match cmd {
+        Command::Terminal(t) => terminal_quiet(t, result),
+        Command::Viewer(v) => viewer_quiet(v, result),
+        Command::Shutdown => String::new(),
+        Command::Daemon | Command::Json | Command::Repl => String::new(),
+    }
+}
+
+fn terminal_quiet(cmd: &TerminalCommand, result: &Value) -> String {
+    match cmd {
+        TerminalCommand::Create { .. } => take_str(result, "id"),
+        TerminalCommand::List => result
+            .get("terminals")
+            .and_then(|t| t.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|t| t.get("id").and_then(|v| v.as_str()))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default(),
+        TerminalCommand::Show { .. }
+        | TerminalCommand::Rows { .. }
+        | TerminalCommand::Select { .. } => take_str(result, "text"),
+        TerminalCommand::Read { .. } => take_str(result, "text"),
+        TerminalCommand::Region { .. } => result
+            .get("lines")
+            .and_then(|l| l.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default(),
+        TerminalCommand::Status { .. } => take_str(result, "process_state"),
+        TerminalCommand::Events { .. } => result
+            .get("events")
+            .map(|e| e.to_string())
+            .unwrap_or_default(),
+        TerminalCommand::Destroy { .. }
+        | TerminalCommand::SendKey { .. }
+        | TerminalCommand::SendKeys { .. }
+        | TerminalCommand::Mouse { .. }
+        | TerminalCommand::Scroll { .. }
+        | TerminalCommand::Resize { .. } => String::new(),
+    }
+}
+
+fn viewer_quiet(cmd: &ViewerCommand, result: &Value) -> String {
+    match cmd {
+        ViewerCommand::Start { .. } | ViewerCommand::Open => take_str(result, "address"),
+        ViewerCommand::Status => take_str(result, "address"),
+        ViewerCommand::Stop => String::new(),
+    }
+}
+
+fn take_str(result: &Value, key: &str) -> String {
+    result
+        .get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn build_request(cmd: &Command) -> Result<Request> {
     match cmd {
         Command::Daemon | Command::Json | Command::Repl => {
             anyhow::bail!("internal: build_request called for special command")
         }
-        Command::Create { size, shell } => Ok(Request::TerminalCreate {
-            size: Some(Size::Named(size)),
-            shell,
+        Command::Shutdown => Ok(Request::Shutdown),
+        Command::Terminal(t) => build_terminal_request(t),
+        Command::Viewer(v) => Ok(build_viewer_request(v)),
+    }
+}
+
+fn build_terminal_request(cmd: &TerminalCommand) -> Result<Request> {
+    match cmd {
+        TerminalCommand::Create { size, shell } => Ok(Request::TerminalCreate {
+            size: Some(Size::Named(size.clone())),
+            shell: shell.clone(),
         }),
-        Command::Destroy { id } => Ok(Request::TerminalDestroy { id }),
-        Command::List => Ok(Request::TerminalList),
-        Command::SendKey { id, key } => Ok(Request::TerminalSendKey { id, key }),
-        Command::SendKeys { id, input } => {
-            let parsed: Vec<KeyInput> = serde_json::from_str(&input).context(
+        TerminalCommand::Destroy { id, if_exists } => Ok(Request::TerminalDestroy {
+            id: id.clone(),
+            if_exists: *if_exists,
+        }),
+        TerminalCommand::List => Ok(Request::TerminalList),
+        TerminalCommand::SendKey { id, key } => Ok(Request::TerminalSendKey {
+            id: id.clone(),
+            key: key.clone(),
+        }),
+        TerminalCommand::SendKeys { id, input } => {
+            let parsed: Vec<KeyInput> = serde_json::from_str(input).context(
                 "`input` must be a JSON array like [{\"text\":\"hi\"},{\"key\":\"Enter\"}]",
             )?;
-            Ok(Request::TerminalSendKeys { id, input: parsed })
+            Ok(Request::TerminalSendKeys {
+                id: id.clone(),
+                input: parsed,
+            })
         }
-        Command::Mouse {
+        TerminalCommand::Mouse {
             id,
             event,
             button,
@@ -63,22 +191,24 @@ fn build_request(cmd: Command) -> Result<Request> {
         } => {
             let action = match event.to_lowercase().as_str() {
                 "click" => MouseAction::Click {
-                    button,
+                    button: button.clone(),
                     x: x.context("--x required")?,
                     y: y.context("--y required")?,
                 },
                 "press" => MouseAction::Press {
-                    button,
+                    button: button.clone(),
                     x: x.context("--x required")?,
                     y: y.context("--y required")?,
                 },
                 "release" => MouseAction::Release {
-                    button,
+                    button: button.clone(),
                     x: x.context("--x required")?,
                     y: y.context("--y required")?,
                 },
                 "scroll" => MouseAction::Scroll {
-                    direction: direction.context("--direction required for scroll")?,
+                    direction: direction
+                        .clone()
+                        .context("--direction required for scroll")?,
                     x: x.context("--x required")?,
                     y: y.context("--y required")?,
                 },
@@ -90,47 +220,69 @@ fn build_request(cmd: Command) -> Result<Request> {
                 },
                 other => anyhow::bail!("unknown mouse event '{other}'"),
             };
-            Ok(Request::TerminalMouse { id, action })
+            Ok(Request::TerminalMouse {
+                id: id.clone(),
+                action,
+            })
         }
-        Command::Read {
+        TerminalCommand::Read {
             id,
             mode,
             max_lines,
-        } => {
-            let mode = parse_read_mode(&mode)?;
-            Ok(Request::TerminalReadScreen {
-                id,
-                mode,
-                max_lines,
-            })
-        }
-        Command::Show { id } => Ok(Request::TerminalShowScreen { id }),
-        Command::Rows { id, from, to } => Ok(Request::TerminalReadRows { id, from, to }),
-        Command::Region { id, x, y, w, h } => Ok(Request::TerminalReadRegion { id, x, y, w, h }),
-        Command::Status { id } => Ok(Request::TerminalStatus { id }),
-        Command::Events { id, max } => Ok(Request::TerminalPollEvents { id, max }),
-        Command::Select {
+        } => Ok(Request::TerminalReadScreen {
+            id: id.clone(),
+            mode: parse_read_mode(mode)?,
+            max_lines: *max_lines,
+        }),
+        TerminalCommand::Show { id } => Ok(Request::TerminalShowScreen { id: id.clone() }),
+        TerminalCommand::Rows { id, from, to } => Ok(Request::TerminalReadRows {
+            id: id.clone(),
+            from: *from,
+            to: *to,
+        }),
+        TerminalCommand::Region { id, x, y, w, h } => Ok(Request::TerminalReadRegion {
+            id: id.clone(),
+            x: *x,
+            y: *y,
+            w: *w,
+            h: *h,
+        }),
+        TerminalCommand::Status { id } => Ok(Request::TerminalStatus { id: id.clone() }),
+        TerminalCommand::Events { id, max } => Ok(Request::TerminalPollEvents {
+            id: id.clone(),
+            max: *max,
+        }),
+        TerminalCommand::Select {
             id,
             from_row,
             from_col,
             to_row,
             to_col,
         } => Ok(Request::TerminalSelect {
-            id,
-            from_row,
-            from_col,
-            to_row,
-            to_col,
+            id: id.clone(),
+            from_row: *from_row,
+            from_col: *from_col,
+            to_row: *to_row,
+            to_col: *to_col,
         }),
-        Command::Scroll { id, by } => Ok(Request::TerminalScroll { id, by }),
-        Command::Resize { id, rows, cols } => Ok(Request::TerminalResize { id, rows, cols }),
-        Command::Viewer(viewer) => match viewer {
-            ViewerCommand::Start { port } => Ok(Request::ViewerStart { port }),
-            ViewerCommand::Stop => Ok(Request::ViewerStop),
-            ViewerCommand::Status => Ok(Request::ViewerStatus),
-            ViewerCommand::Open => Ok(Request::ViewerStart { port: None }),
-        },
-        Command::Shutdown => Ok(Request::Shutdown),
+        TerminalCommand::Scroll { id, by } => Ok(Request::TerminalScroll {
+            id: id.clone(),
+            by: *by,
+        }),
+        TerminalCommand::Resize { id, rows, cols } => Ok(Request::TerminalResize {
+            id: id.clone(),
+            rows: *rows,
+            cols: *cols,
+        }),
+    }
+}
+
+fn build_viewer_request(cmd: &ViewerCommand) -> Request {
+    match cmd {
+        ViewerCommand::Start { port } => Request::ViewerStart { port: *port },
+        ViewerCommand::Stop => Request::ViewerStop,
+        ViewerCommand::Status => Request::ViewerStatus,
+        ViewerCommand::Open => Request::ViewerStart { port: None },
     }
 }
 

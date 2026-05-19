@@ -4,20 +4,52 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+const LONG_ABOUT: &str = "\
+kou-tty is a headless terminal emulator. It spawns a PTY for each terminal,
+drains output through a VT/ANSI parser into an in-memory grid, and exposes
+a noun-verb CLI plus a JSON-RPC stdin/stdout bridge for AI agents.
+
+Examples:
+  # spawn a terminal, run a command, read the result
+  ID=$(kou-tty terminal create --quiet)
+  kou-tty terminal send-keys \"$ID\" '[{\"text\":\"echo hi\"},{\"key\":\"Enter\"}]'
+  kou-tty terminal show \"$ID\" --quiet
+  kou-tty terminal destroy \"$ID\" --if-exists
+
+  # JSON-RPC bridge (one request per line, one response per line)
+  printf '{\"method\":\"ping\"}\\n' | kou-tty json
+
+  # web viewer (debug UI for humans)
+  kou-tty viewer start --port 8039
+
+Exit codes:
+  0  success
+  1  general failure
+  2  usage error or bad request
+  3  terminal not found
+  5  conflict / already exists
+";
+
 #[derive(Parser)]
 #[command(
     name = "kou-tty",
     version,
     about = "Headless in-memory terminal emulator CLI",
-    long_about = "kou-tty is a headless terminal emulator. It spawns a PTY for each \
-                  terminal, drains output through a VT/ANSI parser into an in-memory \
-                  grid, and exposes 17 CLI subcommands plus a JSON stdin/stdout mode \
-                  for AI agents."
+    long_about = LONG_ABOUT,
+    disable_help_subcommand = true,
 )]
 pub struct Cli {
-    /// Path to daemon socket. Default: $XDG_RUNTIME_DIR/kou-tty-<uid>.sock or $TMPDIR equivalent.
+    /// Path to daemon socket. Default: $XDG_RUNTIME_DIR/kou-tty-<uid>.sock or $TMPDIR/...
     #[arg(long, global = true)]
     pub socket: Option<PathBuf>,
+
+    /// Print only the most useful value from each response (id, text, state, ...).
+    #[arg(long, short = 'q', global = true)]
+    pub quiet: bool,
+
+    /// Print single-line JSON instead of pretty-printed JSON.
+    #[arg(long, short = 'c', global = true, conflicts_with = "quiet")]
+    pub compact: bool,
 
     #[command(subcommand)]
     pub command: Command,
@@ -34,35 +66,76 @@ pub enum Command {
     /// Interactive REPL for manual debugging.
     Repl,
 
-    /// Create a new terminal.
+    /// Stop the running daemon. Idempotent (no error if daemon not running).
+    Shutdown,
+
+    /// Operate on terminals.
+    #[command(subcommand)]
+    Terminal(TerminalCommand),
+
+    /// Web viewer controls.
+    #[command(subcommand)]
+    Viewer(ViewerCommand),
+}
+
+#[derive(Subcommand)]
+pub enum TerminalCommand {
+    /// Create a new terminal. `--quiet` prints the id only.
+    #[command(long_about = "Spawn a fresh PTY with the given size and shell.\n\n\
+Examples:\n  \
+kou-tty terminal create\n  \
+kou-tty terminal create --size 120x40 --shell /bin/zsh\n  \
+ID=$(kou-tty terminal create --quiet)")]
     Create {
         /// Size: 80x24, 120x40, 160x40, 200x50, or COLSxROWS.
         #[arg(long, default_value = "80x24")]
         size: String,
-        /// Shell binary path. Defaults to $SHELL.
+        /// Shell binary path. Defaults to $SHELL or /bin/bash.
         #[arg(long)]
         shell: Option<String>,
     },
 
-    /// Destroy a terminal by ID.
-    Destroy { id: String },
+    /// Destroy a terminal by id.
+    #[command(long_about = "Kill the child process and free the PTY.\n\n\
+Examples:\n  \
+kou-tty terminal destroy a0\n  \
+kou-tty terminal destroy a0 --if-exists   # idempotent: ok even if already gone")]
+    Destroy {
+        id: String,
+        /// Treat a missing terminal as success (idempotent).
+        #[arg(long)]
+        if_exists: bool,
+    },
 
     /// List all active terminals.
     List,
 
-    /// Send a single named key.
-    SendKey { id: String, key: String },
+    /// Send a single named key (Enter, Tab, Escape, Ctrl+c, ...).
+    SendKey {
+        id: String,
+        /// Key name. Examples: Enter, Tab, Escape, Backspace, Up, F5, Ctrl+c, Alt+f
+        key: String,
+    },
 
-    /// Send a sequence of inputs (JSON array, e.g. '[{"text":"vim"},{"key":"Enter"}]').
-    SendKeys { id: String, input: String },
+    /// Send a sequence of inputs as a JSON array.
+    #[command(
+        long_about = "Send a JSON array of {text,key} items to the terminal.\n\n\
+Examples:\n  \
+kou-tty terminal send-keys a0 '[{\"text\":\"vim file.txt\"},{\"key\":\"Enter\"}]'\n  \
+kou-tty terminal send-keys a0 '[{\"key\":\"Escape\"},{\"text\":\":q!\"},{\"key\":\"Enter\"}]'"
+    )]
+    SendKeys {
+        id: String,
+        /// JSON array of inputs.
+        input: String,
+    },
 
-    /// Send a mouse event.
+    /// Send a mouse event (SGR-1006 encoding).
     Mouse {
         id: String,
         /// Event: click, press, release, scroll, drag.
         #[arg(long, default_value = "click")]
         event: String,
-        /// Button: left, middle, right.
         #[arg(long, default_value = "left")]
         button: String,
         #[arg(long)]
@@ -81,10 +154,13 @@ pub enum Command {
         to_y: Option<u16>,
     },
 
-    /// Read the screen with coordinate overlay.
+    /// Read the screen with a coordinate overlay.
+    #[command(long_about = "Read modes:\n  \
+full     every row with a column ruler\n  \
+changes  only rows that changed since the last read (token-efficient)\n  \
+plain    every row, no overlay")]
     Read {
         id: String,
-        /// Mode: full, changes, plain.
         #[arg(long, default_value = "full")]
         mode: String,
         #[arg(long)]
@@ -110,7 +186,7 @@ pub enum Command {
         h: u16,
     },
 
-    /// Get the status of a terminal.
+    /// Get terminal status (process state, has_new_content, cursor, ...).
     Status { id: String },
 
     /// Poll and drain the event queue.
@@ -120,7 +196,7 @@ pub enum Command {
         max: Option<usize>,
     },
 
-    /// Select a rectangular region of text.
+    /// Select a rectangular region of text. Pure read (does not modify the screen).
     Select {
         id: String,
         #[arg(long)]
@@ -138,18 +214,11 @@ pub enum Command {
 
     /// Resize a terminal.
     Resize { id: String, rows: u16, cols: u16 },
-
-    /// Web viewer controls.
-    #[command(subcommand)]
-    Viewer(ViewerCommand),
-
-    /// Stop the running daemon.
-    Shutdown,
 }
 
 #[derive(Subcommand)]
 pub enum ViewerCommand {
-    /// Start the web viewer.
+    /// Start the web viewer (binds 127.0.0.1, auto-probes the next 10 ports).
     Start {
         #[arg(long)]
         port: Option<u16>,
@@ -158,6 +227,6 @@ pub enum ViewerCommand {
     Stop,
     /// Show viewer status and address.
     Status,
-    /// Print the viewer URL (starting it if needed) — for use with `open`/`xdg-open`.
+    /// Start the viewer if needed and print its URL.
     Open,
 }

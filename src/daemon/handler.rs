@@ -27,14 +27,19 @@ impl DaemonContext {
 pub async fn handle_request(ctx: Arc<DaemonContext>, request: Request) -> ApiResponse {
     let registry = Arc::clone(&ctx.registry);
     let viewer = Arc::clone(&ctx.viewer);
-    let result = tokio::task::spawn_blocking(move || handle_blocking(registry, viewer, request))
-        .await
-        .unwrap_or_else(|e| ApiResponse::err("internal", e.to_string()));
+    let mut result =
+        tokio::task::spawn_blocking(move || handle_blocking(registry, viewer, request))
+            .await
+            .unwrap_or_else(|e| ApiResponse::err("internal", e.to_string()));
 
-    if matches!(
-        result.error.as_ref().map(|e| e.code.as_str()),
-        Some("shutdown")
-    ) {
+    let should_shutdown = result
+        .result
+        .as_mut()
+        .and_then(|v| v.as_object_mut())
+        .and_then(|obj| obj.remove("__shutdown__"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if should_shutdown {
         ctx.shutdown.notify_waiters();
     }
     result
@@ -63,9 +68,19 @@ fn handle_blocking(
                 Err(e) => ApiResponse::err("create_failed", e.to_string()),
             }
         }
-        Request::TerminalDestroy { id } => match registry.destroy(&id) {
+        Request::TerminalDestroy { id, if_exists } => match registry.destroy(&id) {
             Ok(()) => ApiResponse::ok(json!({ "destroyed": id })),
-            Err(e) => ApiResponse::err("not_found", e.to_string()),
+            Err(e) => {
+                if if_exists {
+                    ApiResponse::ok(json!({ "destroyed": id, "missing": true }))
+                } else {
+                    ApiResponse::err_hint(
+                        "not_found",
+                        e.to_string(),
+                        "run `kou-tty terminal list` to see active ids, or pass `--if-exists` to ignore",
+                    )
+                }
+            }
         },
         Request::TerminalList => {
             let items: Vec<Value> = registry
@@ -235,7 +250,11 @@ fn handle_blocking(
         }
         Request::ViewerStart { port } => match viewer.start(Arc::clone(&registry), port) {
             Ok(addr) => ApiResponse::ok(json!({ "address": addr })),
-            Err(e) => ApiResponse::err("viewer_failed", e.to_string()),
+            Err(e) => ApiResponse::err_hint(
+                "viewer_failed",
+                e.to_string(),
+                "pass --port N to try a different port, or run `kou-tty viewer stop` first",
+            ),
         },
         Request::ViewerStop => match viewer.stop() {
             Ok(()) => ApiResponse::ok(json!({ "stopped": true })),
@@ -245,7 +264,7 @@ fn handle_blocking(
             let addr = viewer.address();
             ApiResponse::ok(json!({ "running": addr.is_some(), "address": addr }))
         }
-        Request::Shutdown => ApiResponse::err("shutdown", "daemon shutting down"),
+        Request::Shutdown => ApiResponse::ok(json!({ "shutdown": true, "__shutdown__": true })),
     }
 }
 
@@ -255,7 +274,11 @@ where
 {
     match registry.get(id) {
         Ok(e) => f(e),
-        Err(err) => ApiResponse::err("not_found", err.to_string()),
+        Err(err) => ApiResponse::err_hint(
+            "not_found",
+            err.to_string(),
+            "run `kou-tty terminal list` to see active ids",
+        ),
     }
 }
 

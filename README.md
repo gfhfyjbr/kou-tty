@@ -46,15 +46,19 @@ install -m 755 target/release/kou-tty ~/.local/bin/kou-tty
 ## Quick start
 
 ```sh
-ID=$(kou-tty create --size 80x24 | jq -r .result.id)
-kou-tty send-keys "$ID" '[{"text":"echo hello"},{"key":"Enter"}]'
+ID=$(kou-tty terminal create --quiet)
+kou-tty terminal send-keys "$ID" '[{"text":"echo hello"},{"key":"Enter"}]'
 sleep 0.2
-kou-tty show "$ID"
-kou-tty destroy "$ID"
+kou-tty terminal show "$ID" --quiet
+kou-tty terminal destroy "$ID" --if-exists
 kou-tty shutdown
 ```
 
-`kou-tty --help` lists every subcommand. The full agent-facing reference lives in [`skills/driving-terminal/`](skills/driving-terminal/SKILL.md).
+`kou-tty --help` lists every subcommand. Output is **pretty JSON** by default; `--compact` for single-line JSON, `--quiet` for bare values (`id`, plain text, process state). Errors go to stderr as `error[<code>]: <message>` plus a `hint: ...` line.
+
+Exit codes: `0` success · `2` usage / bad request · `3` not found · `5` conflict · `1` general failure. `shutdown` is idempotent (always `0`).
+
+The full agent-facing reference lives in [`skills/driving-terminal/`](skills/driving-terminal/SKILL.md).
 
 ## Web viewer
 
@@ -118,11 +122,11 @@ scripts/smoke.sh
 Manual one-liners while developing:
 
 ```sh
-ID=$(./target/release/kou-tty create --size 80x24 | jq -r .result.id)
-./target/release/kou-tty send-keys "$ID" '[{"text":"echo hi"},{"key":"Enter"}]'
+ID=$(./target/release/kou-tty terminal create --quiet)
+./target/release/kou-tty terminal send-keys "$ID" '[{"text":"echo hi"},{"key":"Enter"}]'
 sleep 0.2
-./target/release/kou-tty show "$ID"
-./target/release/kou-tty destroy "$ID"
+./target/release/kou-tty terminal show "$ID" --quiet
+./target/release/kou-tty terminal destroy "$ID" --if-exists
 ./target/release/kou-tty shutdown
 ```
 

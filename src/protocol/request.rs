@@ -12,6 +12,8 @@ pub enum Request {
     },
     TerminalDestroy {
         id: String,
+        #[serde(default)]
+        if_exists: bool,
     },
     TerminalList,
     TerminalSendKey {
