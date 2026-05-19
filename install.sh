@@ -7,7 +7,7 @@
 # a local ./skills/ directory when developing).
 #
 # Quick install (from release):
-#   curl -fsSL https://github.com/paranoikcodit/kou-tty/releases/latest/download/install.sh | bash
+#   curl -fsSL https://github.com/gfhfyjbr/kou-tty/releases/latest/download/install.sh | bash
 #
 # Local / development:
 #   ./install.sh bundle           # repack ./skills/ into this script
@@ -26,7 +26,7 @@ set -euo pipefail
 
 # ── Configuration ───────────────────────────────────────────────────────────
 
-KOU_TTY_REPO="${KOU_TTY_REPO:-paranoikcodit/kou-tty}"
+KOU_TTY_REPO="${KOU_TTY_REPO:-gfhfyjbr/kou-tty}"
 KOU_TTY_VERSION="${KOU_TTY_VERSION:-latest}"
 INSTALL_DIR="${KOU_TTY_INSTALL_DIR:-$HOME/.local/bin}"
 DEFAULT_SKILL="driving-terminal"
@@ -679,7 +679,7 @@ exit 0
 #   ./install.sh bundle
 # shellcheck disable=SC2317,SC2034,SC2287,SC2188
 __KOU_TTY_BUNDLE_BEGIN__
-H4sIAKckDGoAA+193XMbR7af762bSgV5zn3uCzkl0gZAAPySKFl7ZUqymZUlLUmtrtfl4gyABjHm
+H4sIACYlDGoAA+193XMbR7af762bSgV5zn3uCzkl0gZAAPySKFl7ZUqymZUlLUmtrtfl4gyABjHm
 YGY0HyJhy6l9SlVekzwkz6m6f0f+ln3Mv5CXnN853fMFECRtWVsrYVwWgUFPd0/3OafP9+mcdD75
 ra9ut7u7va3474787fa35K983lS97X53s9vb2d3uqW6vv9nvfaK6v/nM6MqS1I1pKqfjyXj2wyC+
 rB01G4+X9COvovK/fyvXv/nHf/vJ33/yyTfuUD0/Uv+izIV7n/w7+r9P/7+m//H9f1+vy4fHx4fm

@@ -10,7 +10,7 @@ Heavily inspired by [npcterm](https://github.com/alejandroqh/npcterm) — same s
 ### One-liner (binary + skill, all detected agent environments)
 
 ```sh
-curl -fsSL https://github.com/paranoikcodit/kou-tty/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/gfhfyjbr/kou-tty/releases/latest/download/install.sh | bash
 ```
 
 This downloads the right `kou-tty` binary for your platform into `~/.local/bin`, then unpacks the `driving-terminal` skill from the embedded bundle and installs it into every detected target (`opencode`, `claude-code`, `codex`, `pi`, `claude-desktop`, `openclaw`).
@@ -19,7 +19,7 @@ Other useful invocations:
 
 ```sh
 # pin a release
-curl -fsSL https://github.com/paranoikcodit/kou-tty/releases/download/v0.1.0/install.sh | bash
+curl -fsSL https://github.com/gfhfyjbr/kou-tty/releases/download/v0.1.0/install.sh | bash
 
 # binary only, no skills
 curl -fsSL .../install.sh | bash -s -- install --binary-only
@@ -34,7 +34,7 @@ curl -fsSL .../install.sh | bash -s -- install --binary-only
 ### From source
 
 ```sh
-git clone https://github.com/paranoikcodit/kou-tty.git
+git clone https://github.com/gfhfyjbr/kou-tty.git
 cd kou-tty
 cargo build --release
 install -m 755 target/release/kou-tty ~/.local/bin/kou-tty

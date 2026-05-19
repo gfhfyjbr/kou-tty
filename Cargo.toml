@@ -5,6 +5,7 @@ edition = "2024"
 description = "Headless in-memory terminal emulator for AI agents, exposed as a CLI"
 license = "Apache-2.0"
 repository = "https://github.com/gfhfyjbr/kou-tty"
+homepage = "https://github.com/gfhfyjbr/kou-tty"
 keywords = ["pty", "terminal", "agent", "tui", "headless"]
 categories = ["command-line-utilities"]
 
