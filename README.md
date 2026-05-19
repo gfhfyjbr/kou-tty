@@ -10,19 +10,21 @@ Heavily inspired by [npcterm](https://github.com/alejandroqh/npcterm) — same s
 ### One-liner (binary + skill, all detected agent environments)
 
 ```sh
-curl -fsSL https://github.com/gfhfyjbr/kou-tty/releases/latest/download/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/gfhfyjbr/kou-tty/main/install.sh | bash
 ```
 
-This downloads the right `kou-tty` binary for your platform into `~/.local/bin`, then unpacks the `driving-terminal` skill from the embedded bundle and installs it into every detected target (`opencode`, `claude-code`, `codex`, `pi`, `claude-desktop`, `openclaw`).
+The script downloads the right `kou-tty` binary for your platform from the latest GitHub release into `~/.local/bin`, then fetches the `driving-terminal` skill files from `raw.githubusercontent.com` and installs them into every detected target (`opencode`, `claude-code`, `codex`, `pi`, `claude-desktop`, `openclaw`).
 
 Other useful invocations:
 
 ```sh
-# pin a release
-curl -fsSL https://github.com/gfhfyjbr/kou-tty/releases/download/v0.1.0/install.sh | bash
+# pin to a tag (binary release + matching skill ref)
+curl -fsSL https://raw.githubusercontent.com/gfhfyjbr/kou-tty/v0.1.0/install.sh \
+  | KOU_TTY_VERSION=v0.1.0 bash
 
 # binary only, no skills
-curl -fsSL .../install.sh | bash -s -- install --binary-only
+curl -fsSL https://raw.githubusercontent.com/gfhfyjbr/kou-tty/main/install.sh \
+  | bash -s -- install --binary-only
 
 # skill only, into one target, as a symlink to the repo
 ./install.sh install --skill-only --target codex --symlink
@@ -76,7 +78,7 @@ kou-tty viewer stop
 | `./install.sh uninstall --remove-binary` | …and delete the binary |
 | `./install.sh list` | Show what's installed where |
 | `./install.sh doctor` | Diagnose detection / bundle / paths |
-| `./install.sh bundle` | Re-embed `./skills/` into this script (used by CI) |
+
 
 Supported targets:
 
@@ -89,12 +91,12 @@ Supported targets:
 | `claude-desktop` | macOS: `~/Library/Application Support/Claude/skills/` · Linux: `~/.config/Claude/skills/` |
 | `openclaw` | `~/.openclaw/skills/` |
 
-Env overrides: `KOU_TTY_REPO`, `KOU_TTY_VERSION`, `KOU_TTY_INSTALL_DIR`, `KOU_TTY_SKILLS_DIR`, `CODEX_HOME`.
+Env overrides: `KOU_TTY_REPO`, `KOU_TTY_VERSION`, `KOU_TTY_SKILL_REF`, `KOU_TTY_INSTALL_DIR`, `KOU_TTY_SKILLS_DIR`, `CODEX_HOME`.
 
 ## CI / Release
 
 - `.github/workflows/ci.yml` — runs on every push/PR: `cargo build --release`, `cargo test`, `cargo +nightly fmt -- --check`, shellcheck, and a Python skill-frontmatter validator.
-- `.github/workflows/release.yml` — runs on every `v*` tag: builds binaries for macOS arm64/x64, Linux x64/arm64, Windows x64, regenerates `install.sh` with a fresh skill bundle, and publishes everything as a GitHub release.
+- `.github/workflows/release.yml` — runs on every `v*` tag: builds binaries for macOS arm64/x64 and Linux x64/arm64 and publishes them as a GitHub release. `install.sh` and the skill itself live in the repo and are served via `raw.githubusercontent.com`; they are *not* uploaded as release assets.
 
 ## How `kou-tty` compares to `npcterm`
 

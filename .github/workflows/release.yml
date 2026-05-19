@@ -92,18 +92,6 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: build skill bundle tarball
-        run: |
-          tar czf dist/skill-bundle.tar.gz -C skills .
-          ls -la dist/
-
-      - name: bundle install.sh with embedded skill
-        run: |
-          chmod +x install.sh
-          ./install.sh bundle
-          cp install.sh dist/install.sh
-          chmod +x dist/install.sh
-
       - name: resolve tag
         id: tag
         run: |
@@ -123,9 +111,7 @@ jobs:
             gh release create "$TAG" \
               --title "$TAG" \
               --generate-notes \
-              dist/kou-tty-* dist/install.sh dist/skill-bundle.tar.gz
+              dist/kou-tty-*
           else
-            gh release upload "$TAG" \
-              dist/kou-tty-* dist/install.sh dist/skill-bundle.tar.gz \
-              --clobber
+            gh release upload "$TAG" dist/kou-tty-* --clobber
           fi
