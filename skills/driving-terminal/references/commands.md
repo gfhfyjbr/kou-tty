@@ -28,13 +28,13 @@
 
 ## Output flags
 
-Every subcommand writes JSON to stdout. The two global flags control the format:
+The default is the **bare most-useful value** (id, plain text, process_state, ...). Use a flag to switch to JSON:
 
-- (default) — pretty multi-line JSON.
-- `--compact` / `-c` — single-line JSON, ideal for piping into `jq -c` or grep.
-- `--quiet`  / `-q` — bare value of the most useful field only (no JSON envelope).
+- (default) — bare value, ready for `$(...)` and shell pipelines. Empty stdout means "ok, nothing to report".
+- `--json` / `-j` — full JSON envelope `{ ok, result | error }`.
+- `--compact` / `-c` — single-line JSON, implies `--json`. Ideal for `jq -c` or log streams.
 
-Human-readable error lines (`error[<code>]: ...` and `hint: ...`) always go to **stderr**.
+Human-readable error lines (`error[<code>]: ...` and `hint: ...`) always go to **stderr**. In bare mode stdout stays empty on error so `$(...)` captures nothing.
 
 ## Exit codes
 
@@ -49,7 +49,7 @@ Human-readable error lines (`error[<code>]: ...` and `hint: ...`) always go to *
 ## Global flags
 
 - `--socket <PATH>` — custom Unix socket. Default: `$XDG_RUNTIME_DIR/kou-tty-<uid>.sock` or `$TMPDIR/kou-tty-<uid>.sock`.
-- `--quiet` / `-q`, `--compact` / `-c` — see above.
+- `--json` / `-j`, `--compact` / `-c` — see above.
 
 Set `RUST_LOG=info kou-tty ...` to see daemon logs on stderr.
 
@@ -89,7 +89,7 @@ kou-tty shutdown
 
 ```bash
 kou-tty terminal create [--size <SIZE>] [--shell <PATH>]
-kou-tty --quiet terminal create        # prints just the id
+kou-tty terminal create        # prints just the id
 ```
 
 - `--size`: `80x24` (default) / `120x40` / `160x40` / `200x50` / custom `COLSxROWS`.
@@ -110,7 +110,7 @@ Kills the child process and removes the terminal from the registry.
 
 ```bash
 kou-tty terminal list
-kou-tty --quiet terminal list   # one id per line
+kou-tty terminal list   # one id per line
 ```
 
 Returns all active terminals with size, `process_state`, and `has_new_content`.
@@ -159,7 +159,7 @@ Coordinates are 0-indexed. SGR-1006 encoding is emitted; the target program must
 
 ```bash
 kou-tty terminal read <ID> [--mode full|changes|plain] [--max-lines N]
-kou-tty --quiet terminal read <ID> --mode full   # bare text (still has the ruler)
+kou-tty terminal read <ID> --mode full   # bare text (still has the ruler)
 ```
 
 - `full` (default): every row, with a column ruler header and row numbers.
@@ -170,7 +170,7 @@ kou-tty --quiet terminal read <ID> --mode full   # bare text (still has the rule
 
 ```bash
 kou-tty terminal show <ID>
-kou-tty --quiet terminal show <ID>   # bare plain text
+kou-tty terminal show <ID>   # bare plain text
 ```
 
 Plain text dump of the screen, no coordinate overlay. Trailing blank rows are preserved as empty lines.
@@ -195,7 +195,7 @@ Returns `lines: [string]`.
 
 ```bash
 kou-tty terminal status <ID>
-kou-tty --quiet terminal status <ID>   # just the process_state string
+kou-tty terminal status <ID>   # just the process_state string
 ```
 
 Fields: `process_state` (`running|idle|waiting_for_input|exited`), `has_new_content`, `exit_status`, `cursor`, `bytes_in`, `shell`.

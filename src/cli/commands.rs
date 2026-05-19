@@ -9,29 +9,36 @@ use crate::protocol::{ApiResponse, KeyInput, MouseAction, ReadMode, Request, Siz
 
 use super::{Cli, Command, TerminalCommand, ViewerCommand};
 
+#[derive(Clone, Copy, Debug)]
+enum OutputMode {
+    Bare,
+    Json,
+    Compact,
+}
+
 pub async fn dispatch(cli: Cli) -> Result<()> {
     let socket = cli.socket.clone().unwrap_or_else(default_socket_path);
-    let quiet = cli.quiet;
-    let compact = cli.compact;
+    let mode = if cli.compact {
+        OutputMode::Compact
+    } else if cli.json {
+        OutputMode::Json
+    } else {
+        OutputMode::Bare
+    };
     match cli.command {
         Command::Daemon => run_daemon(&socket).await,
         Command::Json => run_json_bridge(&socket).await,
         Command::Repl => run_repl(&socket).await,
-        cmd => run_client_command(&socket, cmd, quiet, compact).await,
+        cmd => run_client_command(&socket, cmd, mode).await,
     }
 }
 
-async fn run_client_command(
-    socket: &PathBuf,
-    cmd: Command,
-    quiet: bool,
-    compact: bool,
-) -> Result<()> {
+async fn run_client_command(socket: &PathBuf, cmd: Command, mode: OutputMode) -> Result<()> {
     let client = DaemonClient::new(socket.clone());
     let request = build_request(&cmd)?;
     let response = client.send(&request).await?;
 
-    write_stdout(&response, &cmd, quiet, compact)?;
+    write_stdout(&response, &cmd, mode)?;
     write_stderr_on_error(&response);
 
     let code = exit_code_for(&response);
@@ -41,18 +48,20 @@ async fn run_client_command(
     Ok(())
 }
 
-fn write_stdout(response: &ApiResponse, cmd: &Command, quiet: bool, compact: bool) -> Result<()> {
-    if quiet {
-        let bare = quiet_value(response, cmd);
-        if !bare.is_empty() {
-            println!("{bare}");
+fn write_stdout(response: &ApiResponse, cmd: &Command, mode: OutputMode) -> Result<()> {
+    match mode {
+        OutputMode::Bare => {
+            let bare = bare_value(response, cmd);
+            if !bare.is_empty() {
+                println!("{bare}");
+            }
         }
-        return Ok(());
-    }
-    if compact {
-        println!("{}", serde_json::to_string(response)?);
-    } else {
-        println!("{}", serde_json::to_string_pretty(response)?);
+        OutputMode::Compact => {
+            println!("{}", serde_json::to_string(response)?);
+        }
+        OutputMode::Json => {
+            println!("{}", serde_json::to_string_pretty(response)?);
+        }
     }
     Ok(())
 }
@@ -70,7 +79,7 @@ fn write_stderr_on_error(response: &ApiResponse) {
     }
 }
 
-fn quiet_value(response: &ApiResponse, cmd: &Command) -> String {
+fn bare_value(response: &ApiResponse, cmd: &Command) -> String {
     if !response.ok {
         return String::new();
     }
@@ -78,14 +87,14 @@ fn quiet_value(response: &ApiResponse, cmd: &Command) -> String {
         return String::new();
     };
     match cmd {
-        Command::Terminal(t) => terminal_quiet(t, result),
-        Command::Viewer(v) => viewer_quiet(v, result),
+        Command::Terminal(t) => terminal_bare(t, result),
+        Command::Viewer(v) => viewer_bare(v, result),
         Command::Shutdown => String::new(),
         Command::Daemon | Command::Json | Command::Repl => String::new(),
     }
 }
 
-fn terminal_quiet(cmd: &TerminalCommand, result: &Value) -> String {
+fn terminal_bare(cmd: &TerminalCommand, result: &Value) -> String {
     match cmd {
         TerminalCommand::Create { .. } => take_str(result, "id"),
         TerminalCommand::List => result
@@ -115,7 +124,13 @@ fn terminal_quiet(cmd: &TerminalCommand, result: &Value) -> String {
         TerminalCommand::Status { .. } => take_str(result, "process_state"),
         TerminalCommand::Events { .. } => result
             .get("events")
-            .map(|e| e.to_string())
+            .and_then(|e| e.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .map(|ev| serde_json::to_string(ev).unwrap_or_default())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
             .unwrap_or_default(),
         TerminalCommand::Destroy { .. }
         | TerminalCommand::SendKey { .. }
@@ -126,7 +141,7 @@ fn terminal_quiet(cmd: &TerminalCommand, result: &Value) -> String {
     }
 }
 
-fn viewer_quiet(cmd: &ViewerCommand, result: &Value) -> String {
+fn viewer_bare(cmd: &ViewerCommand, result: &Value) -> String {
     match cmd {
         ViewerCommand::Start { .. } | ViewerCommand::Open => take_str(result, "address"),
         ViewerCommand::Status => take_str(result, "address"),

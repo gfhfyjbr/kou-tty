@@ -44,25 +44,29 @@ KT() {
   "$KOU_TTY_BIN" --socket "$SOCK" "$@"
 }
 
+KTJ() {
+  "$KOU_TTY_BIN" --socket "$SOCK" --json "$@"
+}
+
 jq_get() {
   python3 -c "import json,sys; d=json.load(sys.stdin); print(${1})"
 }
 
-step "terminal create --quiet"
-ID=$(KT --quiet terminal create --shell /bin/sh --size 80x24)
+step "terminal create (bare default → id only)"
+ID=$(KT terminal create --shell /bin/sh --size 80x24)
 CLEAN_ID="$ID"
 [ -n "$ID" ] || fail "empty id"
 [ ${#ID} -eq 2 ] || fail "expected 2-char id, got '$ID'"
 pass "id=$ID"
 
-step "terminal send-keys: echo smoke-marker"
-SENT=$(KT terminal send-keys "$ID" '[{"text":"echo smoke-marker"},{"key":"Enter"}]')
-printf '%s' "$SENT" | jq_get "d['ok']" | grep -qi true || fail "send-keys not ok"
-pass "sent $(printf '%s' "$SENT" | jq_get 'd["result"]["sent"]') bytes"
+step "terminal send-keys: echo smoke-marker (bare → empty stdout)"
+OUT=$(KT terminal send-keys "$ID" '[{"text":"echo smoke-marker"},{"key":"Enter"}]')
+[ -z "$OUT" ] || fail "expected empty stdout, got '$OUT'"
+pass "silent"
 
-step "wait for output"
+step "wait for output via bare show"
 for _ in $(seq 1 30); do
-  TEXT=$(KT --quiet terminal show "$ID")
+  TEXT=$(KT terminal show "$ID")
   case "$TEXT" in
     *smoke-marker*) break ;;
   esac
@@ -70,48 +74,54 @@ for _ in $(seq 1 30); do
 done
 case "$TEXT" in
   *smoke-marker*) pass "marker visible in show" ;;
-  *) fail "marker not found in show output" ;;
+  *) fail "marker not found" ;;
 esac
 
-step "terminal status (process_state)"
-STATE=$(KT --quiet terminal status "$ID")
+step "terminal status (bare → process_state)"
+STATE=$(KT terminal status "$ID")
 case "$STATE" in
   waiting_for_input|idle|running) pass "process_state=$STATE" ;;
-  *) fail "unexpected process_state=$STATE" ;;
+  *) fail "unexpected '$STATE'" ;;
 esac
 
 step "terminal read --mode full has coordinate ruler"
-FULL=$(KT terminal read "$ID" --mode full --max-lines 5 | jq_get 'd["result"]["text"]')
+FULL=$(KT terminal read "$ID" --mode full --max-lines 5)
 case "$FULL" in
   *0123456789*) pass "ruler present" ;;
   *) fail "no coordinate ruler" ;;
 esac
 
-step "terminal read --mode changes returns row list"
-ROWS=$(KT terminal read "$ID" --mode changes --max-lines 5 | jq_get 'len(d["result"]["rows"])')
+step "terminal read --mode changes via --json"
+ROWS=$(KTJ terminal read "$ID" --mode changes --max-lines 5 | jq_get 'len(d["result"]["rows"])')
 [ "$ROWS" -ge 0 ] || fail "rows not a list"
 pass "rows length=$ROWS"
 
-step "terminal region read"
-REGION=$(KT terminal region "$ID" --x 0 --y 0 --w 10 --h 2 | jq_get 'len(d["result"]["lines"])')
+step "terminal region read via --json"
+REGION=$(KTJ terminal region "$ID" --x 0 --y 0 --w 10 --h 2 | jq_get 'len(d["result"]["lines"])')
 [ "$REGION" -eq 2 ] || fail "expected 2 lines, got $REGION"
 pass "region returned 2 lines"
 
-step "terminal rows range"
-ROWS_TEXT=$(KT terminal rows "$ID" 0 1 | jq_get 'd["result"]["from"]')
-[ "$ROWS_TEXT" = "0" ] || fail "rows.from != 0"
+step "terminal rows range via --json"
+FROM=$(KTJ terminal rows "$ID" 0 1 | jq_get 'd["result"]["from"]')
+[ "$FROM" = "0" ] || fail "rows.from != 0"
 pass "rows.from=0"
 
-step "terminal events drain"
-EVENTS=$(KT terminal events "$ID" --max 50 | jq_get 'len(d["result"]["events"])')
+step "terminal events drain (bare → JSONL)"
+EVENTS=$(KT terminal events "$ID" --max 50 | wc -l | tr -d ' ')
 [ "$EVENTS" -ge 0 ] || fail "events not a list"
-pass "events drained=$EVENTS"
+pass "events lines=$EVENTS"
 
 step "terminal resize 30x100"
 KT terminal resize "$ID" 30 100 > /dev/null
-NEW=$(KT terminal status "$ID" | jq_get '(d["result"]["rows"], d["result"]["cols"])')
-echo "$NEW" | grep -q "(30, 100)" || fail "resize did not stick: $NEW"
+SIZE=$(KTJ terminal status "$ID" | jq_get '(d["result"]["rows"], d["result"]["cols"])')
+echo "$SIZE" | grep -q "(30, 100)" || fail "resize did not stick: $SIZE"
 pass "resize applied"
+
+step "--compact emits single line"
+COMPACT=$($KOU_TTY_BIN --socket "$SOCK" --compact terminal status "$ID")
+LINES=$(printf '%s\n' "$COMPACT" | wc -l | tr -d ' ')
+[ "$LINES" -eq 1 ] || fail "compact had $LINES lines"
+pass "single-line JSON"
 
 step "json bridge ping"
 PONG=$(printf '{"method":"ping"}\n' | "$KOU_TTY_BIN" --socket "$SOCK" json)
@@ -120,19 +130,18 @@ case "$PONG" in
   *) fail "no pong: $PONG" ;;
 esac
 
-step "terminal list --quiet contains the id"
-LIST=$(KT --quiet terminal list)
+step "terminal list (bare → ids one per line)"
+LIST=$(KT terminal list)
 case "$LIST" in
-  *"$ID"*) pass "list ok" ;;
+  *"$ID"*) pass "list contains $ID" ;;
   *) fail "list missing $ID" ;;
 esac
 
-step "viewer start/stop"
-VS=$(KT viewer start --port 8088)
-ADDR=$(printf '%s' "$VS" | jq_get 'd["result"]["address"]')
+step "viewer start (bare → address)"
+ADDR=$(KT viewer start --port 8088)
 case "$ADDR" in
   http://*) pass "viewer at $ADDR" ;;
-  *) fail "no address: $VS" ;;
+  *) fail "no address: '$ADDR'" ;;
 esac
 sleep 0.2
 curl -fsS "$ADDR/api/terminals" > /dev/null || fail "viewer API not reachable"
@@ -151,14 +160,19 @@ pass "no error on missing id"
 
 step "destroy without --if-exists returns exit 3"
 set +e
-KT terminal destroy "$ID" > /tmp/kou-tty-zz.json 2>/dev/null
+STDERR=$(KT terminal destroy "$ID" 2>&1 >/dev/null)
 RC=$?
 set -e
 [ "$RC" = "3" ] || fail "expected exit 3, got $RC"
-jq_get 'd["error"]["code"]' < /tmp/kou-tty-zz.json | grep -q not_found || fail "wrong error code"
-jq_get 'd["error"]["suggestion"]' < /tmp/kou-tty-zz.json | grep -q "kou-tty terminal list" || fail "no suggestion"
-pass "exit=3 not_found + suggestion present"
-rm -f /tmp/kou-tty-zz.json
+case "$STDERR" in
+  *"error[not_found]"*) ;;
+  *) fail "stderr missing error[not_found]: $STDERR" ;;
+esac
+case "$STDERR" in
+  *"hint:"*) ;;
+  *) fail "stderr missing hint: $STDERR" ;;
+esac
+pass "exit=3, stderr has error+hint"
 
 step "shutdown returns exit 0"
 KT shutdown > /dev/null

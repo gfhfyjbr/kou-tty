@@ -9,18 +9,25 @@ kou-tty is a headless terminal emulator. It spawns a PTY for each terminal,
 drains output through a VT/ANSI parser into an in-memory grid, and exposes
 a noun-verb CLI plus a JSON-RPC stdin/stdout bridge for AI agents.
 
+Output:
+  default      bare value (id, plain text, process_state, ...) — best for $(...)
+  --json / -j  pretty JSON envelope { ok, result | error }
+  --compact    single-line JSON (implies --json)
+
+Errors always print `error[<code>]: <message>` and `hint: ...` to stderr; the
+stdout side stays empty or a clean JSON object so it remains pipe-safe.
+
 Examples:
-  # spawn a terminal, run a command, read the result
-  ID=$(kou-tty terminal create --quiet)
+  ID=$(kou-tty terminal create)
   kou-tty terminal send-keys \"$ID\" '[{\"text\":\"echo hi\"},{\"key\":\"Enter\"}]'
-  kou-tty terminal show \"$ID\" --quiet
+  kou-tty terminal show \"$ID\"
   kou-tty terminal destroy \"$ID\" --if-exists
+
+  # full JSON when scripting with jq
+  kou-tty --json terminal status \"$ID\" | jq -r .result.process_state
 
   # JSON-RPC bridge (one request per line, one response per line)
   printf '{\"method\":\"ping\"}\\n' | kou-tty json
-
-  # web viewer (debug UI for humans)
-  kou-tty viewer start --port 8039
 
 Exit codes:
   0  success
@@ -43,12 +50,12 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub socket: Option<PathBuf>,
 
-    /// Print only the most useful value from each response (id, text, state, ...).
-    #[arg(long, short = 'q', global = true)]
-    pub quiet: bool,
+    /// Print the full JSON envelope instead of the bare value.
+    #[arg(long, short = 'j', global = true)]
+    pub json: bool,
 
-    /// Print single-line JSON instead of pretty-printed JSON.
-    #[arg(long, short = 'c', global = true, conflicts_with = "quiet")]
+    /// Print single-line JSON (implies --json).
+    #[arg(long, short = 'c', global = true)]
     pub compact: bool,
 
     #[command(subcommand)]
@@ -80,12 +87,12 @@ pub enum Command {
 
 #[derive(Subcommand)]
 pub enum TerminalCommand {
-    /// Create a new terminal. `--quiet` prints the id only.
+    /// Create a new terminal. Prints the bare id by default.
     #[command(long_about = "Spawn a fresh PTY with the given size and shell.\n\n\
 Examples:\n  \
-kou-tty terminal create\n  \
+ID=$(kou-tty terminal create)\n  \
 kou-tty terminal create --size 120x40 --shell /bin/zsh\n  \
-ID=$(kou-tty terminal create --quiet)")]
+kou-tty --json terminal create   # full JSON envelope")]
     Create {
         /// Size: 80x24, 120x40, 160x40, 200x50, or COLSxROWS.
         #[arg(long, default_value = "80x24")]

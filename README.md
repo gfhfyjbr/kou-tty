@@ -46,15 +46,15 @@ install -m 755 target/release/kou-tty ~/.local/bin/kou-tty
 ## Quick start
 
 ```sh
-ID=$(kou-tty terminal create --quiet)
+ID=$(kou-tty terminal create)
 kou-tty terminal send-keys "$ID" '[{"text":"echo hello"},{"key":"Enter"}]'
 sleep 0.2
-kou-tty terminal show "$ID" --quiet
+kou-tty terminal show "$ID"
 kou-tty terminal destroy "$ID" --if-exists
 kou-tty shutdown
 ```
 
-`kou-tty --help` lists every subcommand. Output is **pretty JSON** by default; `--compact` for single-line JSON, `--quiet` for bare values (`id`, plain text, process state). Errors go to stderr as `error[<code>]: <message>` plus a `hint: ...` line.
+`kou-tty --help` lists every subcommand. Output is the **bare most-useful value** by default (id, plain text, process state), ready for `$(...)` and pipelines. Add `--json` / `-j` for the full envelope, `--compact` / `-c` for single-line JSON. Errors go to stderr as `error[<code>]: <message>` plus a `hint: ...` line.
 
 Exit codes: `0` success · `2` usage / bad request · `3` not found · `5` conflict · `1` general failure. `shutdown` is idempotent (always `0`).
 
@@ -122,10 +122,10 @@ scripts/smoke.sh
 Manual one-liners while developing:
 
 ```sh
-ID=$(./target/release/kou-tty terminal create --quiet)
+ID=$(./target/release/kou-tty terminal create)
 ./target/release/kou-tty terminal send-keys "$ID" '[{"text":"echo hi"},{"key":"Enter"}]'
 sleep 0.2
-./target/release/kou-tty terminal show "$ID" --quiet
+./target/release/kou-tty terminal show "$ID"
 ./target/release/kou-tty terminal destroy "$ID" --if-exists
 ./target/release/kou-tty shutdown
 ```

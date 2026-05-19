@@ -21,11 +21,14 @@ fn socket_path() -> PathBuf {
     p
 }
 
-fn run(socket: &PathBuf, args: &[&str]) -> Value {
+/// Run a subcommand asking for JSON output and assert success.
+fn run_json(socket: &PathBuf, args: &[&str]) -> Value {
+    let mut full: Vec<&str> = vec!["--json"];
+    full.extend(args.iter().copied());
     let output = Command::new(bin())
         .arg("--socket")
         .arg(socket)
-        .args(args)
+        .args(&full)
         .output()
         .expect("spawn kou-tty");
     assert!(
@@ -38,11 +41,14 @@ fn run(socket: &PathBuf, args: &[&str]) -> Value {
     serde_json::from_slice(&output.stdout).expect("valid JSON on stdout")
 }
 
-fn run_capturing(socket: &PathBuf, args: &[&str]) -> (i32, Value, String) {
+/// Run a subcommand and capture exit code, parsed JSON (if any), and stderr.
+fn run_capture(socket: &PathBuf, args: &[&str]) -> (i32, Value, String) {
+    let mut full: Vec<&str> = vec!["--json"];
+    full.extend(args.iter().copied());
     let output = Command::new(bin())
         .arg("--socket")
         .arg(socket)
-        .args(args)
+        .args(&full)
         .output()
         .expect("spawn kou-tty");
     let body: Value = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
@@ -51,7 +57,8 @@ fn run_capturing(socket: &PathBuf, args: &[&str]) -> (i32, Value, String) {
     (code, body, stderr)
 }
 
-fn quiet_stdout(socket: &PathBuf, args: &[&str]) -> String {
+/// Run a subcommand in default (bare) mode and return trimmed stdout.
+fn bare_stdout(socket: &PathBuf, args: &[&str]) -> String {
     let output = Command::new(bin())
         .arg("--socket")
         .arg(socket)
@@ -80,7 +87,7 @@ fn id_from(create: &Value) -> String {
 fn create_send_read_destroy_cycle() {
     let socket = socket_path();
 
-    let created = run(
+    let created = run_json(
         &socket,
         &[
             "terminal", "create", "--shell", "/bin/sh", "--size", "80x24",
@@ -89,7 +96,7 @@ fn create_send_read_destroy_cycle() {
     let id = id_from(&created);
     assert_eq!(created["ok"], true);
 
-    let sent = run(
+    let sent = run_json(
         &socket,
         &[
             "terminal",
@@ -103,7 +110,7 @@ fn create_send_read_destroy_cycle() {
     let mut found = false;
     for _ in 0..30 {
         thread::sleep(Duration::from_millis(100));
-        let shown = run(&socket, &["terminal", "show", &id]);
+        let shown = run_json(&socket, &["terminal", "show", &id]);
         if shown["result"]["text"]
             .as_str()
             .map(|t| t.contains("cli-marker"))
@@ -115,39 +122,39 @@ fn create_send_read_destroy_cycle() {
     }
     assert!(found, "marker never appeared in show output");
 
-    let status = run(&socket, &["terminal", "status", &id]);
+    let status = run_json(&socket, &["terminal", "status", &id]);
     assert_eq!(status["result"]["id"].as_str().unwrap(), id);
     assert_eq!(status["result"]["cols"].as_u64().unwrap(), 80);
     assert_eq!(status["result"]["rows"].as_u64().unwrap(), 24);
 
-    let destroyed = run(&socket, &["terminal", "destroy", &id]);
+    let destroyed = run_json(&socket, &["terminal", "destroy", &id]);
     assert_eq!(destroyed["ok"], true);
 
-    let _ = run_capturing(&socket, &["shutdown"]);
+    let _ = run_capture(&socket, &["shutdown"]);
 }
 
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn list_returns_active_terminals() {
     let socket = socket_path();
-    let created = run(&socket, &["terminal", "create", "--shell", "/bin/sh"]);
+    let created = run_json(&socket, &["terminal", "create", "--shell", "/bin/sh"]);
     let id = id_from(&created);
 
-    let listed = run(&socket, &["terminal", "list"]);
+    let listed = run_json(&socket, &["terminal", "list"]);
     let terminals = listed["result"]["terminals"]
         .as_array()
         .expect("list array");
     assert!(terminals.iter().any(|t| t["id"] == id));
 
-    run(&socket, &["terminal", "destroy", &id]);
-    let _ = run_capturing(&socket, &["shutdown"]);
+    run_json(&socket, &["terminal", "destroy", &id]);
+    let _ = run_capture(&socket, &["shutdown"]);
 }
 
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn read_full_returns_coordinate_overlay() {
     let socket = socket_path();
-    let created = run(
+    let created = run_json(
         &socket,
         &[
             "terminal", "create", "--shell", "/bin/sh", "--size", "60x10",
@@ -155,7 +162,7 @@ fn read_full_returns_coordinate_overlay() {
     );
     let id = id_from(&created);
 
-    run(
+    run_json(
         &socket,
         &[
             "terminal",
@@ -166,66 +173,66 @@ fn read_full_returns_coordinate_overlay() {
     );
     thread::sleep(Duration::from_millis(300));
 
-    let read = run(&socket, &["terminal", "read", &id, "--mode", "full"]);
+    let read = run_json(&socket, &["terminal", "read", &id, "--mode", "full"]);
     let text = read["result"]["text"].as_str().expect("text");
     assert!(text.contains("hello"), "expected hello in {text:?}");
     assert!(text.lines().next().unwrap().contains('0'));
 
-    run(&socket, &["terminal", "destroy", &id]);
-    let _ = run_capturing(&socket, &["shutdown"]);
+    run_json(&socket, &["terminal", "destroy", &id]);
+    let _ = run_capture(&socket, &["shutdown"]);
 }
 
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn resize_changes_size() {
     let socket = socket_path();
-    let created = run(&socket, &["terminal", "create", "--shell", "/bin/sh"]);
+    let created = run_json(&socket, &["terminal", "create", "--shell", "/bin/sh"]);
     let id = id_from(&created);
 
-    run(&socket, &["terminal", "resize", &id, "30", "100"]);
-    let status = run(&socket, &["terminal", "status", &id]);
+    run_json(&socket, &["terminal", "resize", &id, "30", "100"]);
+    let status = run_json(&socket, &["terminal", "status", &id]);
     assert_eq!(status["result"]["rows"].as_u64().unwrap(), 30);
     assert_eq!(status["result"]["cols"].as_u64().unwrap(), 100);
 
-    run(&socket, &["terminal", "destroy", &id]);
-    let _ = run_capturing(&socket, &["shutdown"]);
+    run_json(&socket, &["terminal", "destroy", &id]);
+    let _ = run_capture(&socket, &["shutdown"]);
 }
 
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn unknown_id_returns_exit_code_3_with_suggestion() {
     let socket = socket_path();
-    let (code, body, stderr) = run_capturing(&socket, &["terminal", "status", "zz"]);
+    let (code, body, stderr) = run_capture(&socket, &["terminal", "status", "zz"]);
     assert_eq!(code, 3, "expected exit 3 for not_found, got {code}");
     assert_eq!(body["ok"], false);
     assert_eq!(body["error"]["code"], "not_found");
     assert!(body["error"]["suggestion"].is_string());
     assert!(stderr.contains("error[not_found]"));
 
-    let _ = run_capturing(&socket, &["shutdown"]);
+    let _ = run_capture(&socket, &["shutdown"]);
 }
 
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn destroy_if_exists_is_idempotent() {
     let socket = socket_path();
-    let (code, _body, _) = run_capturing(&socket, &["terminal", "destroy", "zz"]);
+    let (code, _body, _) = run_capture(&socket, &["terminal", "destroy", "zz"]);
     assert_eq!(code, 3, "without --if-exists should fail with 3");
 
-    let (code, body, _) = run_capturing(&socket, &["terminal", "destroy", "zz", "--if-exists"]);
+    let (code, body, _) = run_capture(&socket, &["terminal", "destroy", "zz", "--if-exists"]);
     assert_eq!(code, 0, "with --if-exists should succeed");
     assert_eq!(body["ok"], true);
     assert_eq!(body["result"]["missing"], true);
 
-    let _ = run_capturing(&socket, &["shutdown"]);
+    let _ = run_capture(&socket, &["shutdown"]);
 }
 
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn shutdown_returns_exit_zero() {
     let socket = socket_path();
-    run(&socket, &["terminal", "create", "--shell", "/bin/sh"]);
-    let (code, body, _) = run_capturing(&socket, &["shutdown"]);
+    run_json(&socket, &["terminal", "create", "--shell", "/bin/sh"]);
+    let (code, body, _) = run_capture(&socket, &["shutdown"]);
     assert_eq!(code, 0);
     assert_eq!(body["ok"], true);
     assert!(
@@ -239,25 +246,57 @@ fn shutdown_returns_exit_zero() {
 
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
-fn quiet_create_prints_only_the_id() {
+fn default_create_prints_only_the_id() {
     let socket = socket_path();
-    let id = quiet_stdout(
-        &socket,
-        &["--quiet", "terminal", "create", "--shell", "/bin/sh"],
-    );
+    let id = bare_stdout(&socket, &["terminal", "create", "--shell", "/bin/sh"]);
     assert!(!id.is_empty());
     assert!(!id.contains('{'), "expected bare id, got {id:?}");
-    assert!(id.len() == 2);
+    assert!(id.len() == 2, "expected 2-char id, got {id:?}");
 
-    run(&socket, &["terminal", "destroy", &id]);
-    let _ = run_capturing(&socket, &["shutdown"]);
+    run_json(&socket, &["terminal", "destroy", &id]);
+    let _ = run_capture(&socket, &["shutdown"]);
+}
+
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn default_send_keys_prints_nothing() {
+    let socket = socket_path();
+    let id = bare_stdout(&socket, &["terminal", "create", "--shell", "/bin/sh"]);
+    let stdout = bare_stdout(
+        &socket,
+        &[
+            "terminal",
+            "send-keys",
+            &id,
+            r#"[{"text":"echo silence"},{"key":"Enter"}]"#,
+        ],
+    );
+    assert!(stdout.is_empty(), "expected empty stdout, got {stdout:?}");
+
+    run_json(&socket, &["terminal", "destroy", &id]);
+    let _ = run_capture(&socket, &["shutdown"]);
+}
+
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn default_status_prints_process_state() {
+    let socket = socket_path();
+    let id = bare_stdout(&socket, &["terminal", "create", "--shell", "/bin/sh"]);
+    let state = bare_stdout(&socket, &["terminal", "status", &id]);
+    assert!(
+        matches!(state.as_str(), "running" | "idle" | "waiting_for_input"),
+        "unexpected state {state:?}"
+    );
+
+    run_json(&socket, &["terminal", "destroy", &id]);
+    let _ = run_capture(&socket, &["shutdown"]);
 }
 
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
 fn compact_emits_single_line_json() {
     let socket = socket_path();
-    let body = quiet_stdout(
+    let body = bare_stdout(
         &socket,
         &["--compact", "terminal", "create", "--shell", "/bin/sh"],
     );
@@ -266,23 +305,46 @@ fn compact_emits_single_line_json() {
     assert_eq!(parsed["ok"], true);
 
     let id = parsed["result"]["id"].as_str().unwrap();
-    run(&socket, &["terminal", "destroy", id]);
-    let _ = run_capturing(&socket, &["shutdown"]);
+    run_json(&socket, &["terminal", "destroy", id]);
+    let _ = run_capture(&socket, &["shutdown"]);
 }
 
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
-fn quiet_list_prints_one_id_per_line() {
+fn default_list_prints_one_id_per_line() {
     let socket = socket_path();
-    run(&socket, &["terminal", "create", "--shell", "/bin/sh"]);
-    run(&socket, &["terminal", "create", "--shell", "/bin/sh"]);
+    bare_stdout(&socket, &["terminal", "create", "--shell", "/bin/sh"]);
+    bare_stdout(&socket, &["terminal", "create", "--shell", "/bin/sh"]);
 
-    let listed = quiet_stdout(&socket, &["--quiet", "terminal", "list"]);
+    let listed = bare_stdout(&socket, &["terminal", "list"]);
     let ids: Vec<&str> = listed.lines().collect();
     assert_eq!(ids.len(), 2);
     for id in &ids {
         assert_eq!(id.len(), 2, "expected 2-char id, got {id:?}");
     }
 
-    let _ = run_capturing(&socket, &["shutdown"]);
+    let _ = run_capture(&socket, &["shutdown"]);
+}
+
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn error_writes_to_stderr_and_stdout_stays_empty_in_bare_mode() {
+    let socket = socket_path();
+    let output = Command::new(bin())
+        .arg("--socket")
+        .arg(&socket)
+        .args(["terminal", "status", "zz"])
+        .output()
+        .expect("spawn");
+    assert_eq!(output.status.code(), Some(3));
+    assert!(
+        output.stdout.is_empty(),
+        "expected empty stdout, got {:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error[not_found]"));
+    assert!(stderr.contains("hint:"));
+
+    let _ = run_capture(&socket, &["shutdown"]);
 }

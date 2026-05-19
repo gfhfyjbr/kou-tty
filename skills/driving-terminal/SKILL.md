@@ -20,26 +20,34 @@ Skip it for one-shot non-interactive commands; plain shell is faster and cheaper
 ## Quick start
 
 ```bash
-ID=$(kou-tty terminal create --quiet)
+ID=$(kou-tty terminal create)
 kou-tty terminal send-keys "$ID" '[{"text":"echo hello"},{"key":"Enter"}]'
 sleep 0.2
-kou-tty terminal show "$ID" --quiet
+kou-tty terminal show "$ID"
 kou-tty terminal destroy "$ID" --if-exists
 ```
 
 ## Output modes
 
-Every subcommand prints **pretty JSON to stdout** by default. Two global flags change that:
+Default output is the **bare most-useful value** — designed for `$(...)` capture and shell pipelines. Add a flag to switch to JSON when you need it:
 
-- `--compact` / `-c` — single-line JSON, easier to pipe through `jq` or `grep`.
-- `--quiet`  / `-q` — bare value of the most useful field. Examples:
-  - `terminal create --quiet` → just the `id` (e.g. `a0`)
-  - `terminal list --quiet` → one `id` per line
-  - `terminal show --quiet` → plain screen text
-  - `terminal status --quiet` → process state (`running` / `idle` / `waiting_for_input` / `exited`)
-  - `terminal read --quiet` → screen text with the coordinate overlay
+| Command                              | Default (bare)                          | With `--json`                                                  |
+| ------------------------------------ | --------------------------------------- | -------------------------------------------------------------- |
+| `kou-tty terminal create`            | `a0`                                    | `{ "ok": true, "result": { "id": "a0", "rows": 24, ... } }`    |
+| `kou-tty terminal list`              | one id per line                         | `{ "result": { "terminals": [{ ... }, ...] } }`                |
+| `kou-tty terminal show <id>`         | plain screen text                       | `{ "result": { "text": "..." } }`                              |
+| `kou-tty terminal status <id>`       | `waiting_for_input`                     | full struct (`process_state`, `has_new_content`, `cursor`, ...)|
+| `kou-tty terminal read <id> --mode full` | screen text with coordinate ruler   | `{ "result": { "text": "...", "rows": [...], "cursor": ... } }`|
+| `kou-tty terminal events <id>`       | one event per line, each line is a JSON | `{ "result": { "events": [ ... ] } }`                          |
+| `kou-tty terminal send-keys ...`     | empty stdout (silent ok)                | `{ "result": { "sent": N } }`                                  |
+| `kou-tty viewer start`               | `http://127.0.0.1:8039`                 | `{ "result": { "address": "..." } }`                           |
 
-Human-readable errors (`error[<code>]: <message>` and `hint: ...`) always go to **stderr**. JSON is always stdout, so `kou-tty ... | jq` works in every case.
+Flags:
+
+- `--json` / `-j` — print the full JSON envelope `{ ok, result | error }`. Use this for `jq` queries or when you need fields the bare value doesn't expose (cursor position, exit_status, has_new_content, ...).
+- `--compact` / `-c` — single-line JSON (implies `--json`). Useful for piping into log streams or `jq -c`.
+
+Human-readable errors (`error[<code>]: <message>` and `hint: ...`) always go to **stderr**. In bare mode, stdout stays empty on error so `$(...)` is safe. In `--json` mode, stdout has the JSON envelope and stderr still has the readable line.
 
 ## Exit codes
 
@@ -55,9 +63,9 @@ Branch on the exit code instead of parsing strings:
 
 ## Core workflow checklist
 
-- [ ] Step 1: `kou-tty terminal create --quiet` and capture the `id`
+- [ ] Step 1: `kou-tty terminal create` and capture the bare `id`
 - [ ] Step 2: `kou-tty terminal send-keys <id>` with a JSON array of text + named keys
-- [ ] Step 3: `kou-tty terminal status <id>` until `process_state` is `idle` or `waiting_for_input`
+- [ ] Step 3: `kou-tty terminal status <id>` until it prints `idle` or `waiting_for_input`
 - [ ] Step 4: `kou-tty terminal read <id> --mode changes` (token-efficient) or `terminal show <id>`
 - [ ] Step 5: repeat 2–4 until done
 - [ ] Step 6: `kou-tty terminal destroy <id> --if-exists`
@@ -68,25 +76,26 @@ Run `kou-tty shutdown` only when no more terminals are needed; the daemon is sha
 
 **Which read command?**
 
-- Need plain text for summarisation / grep → `kou-tty terminal show <id>` (add `--quiet` to skip the JSON envelope).
-- Need only the rows that changed since the last read → `kou-tty terminal read <id> --mode changes`.
+- Need plain text for summarisation / grep → `kou-tty terminal show <id>` (already plain in bare mode).
+- Need only the rows that changed since the last read → `kou-tty --json terminal read <id> --mode changes` and read `result.rows` + `result.text`.
 - Need a column/row ruler for clicking or pointing → `kou-tty terminal read <id> --mode full`.
-- Need a specific rectangle (e.g. one panel in htop) → `kou-tty terminal region <id> --x N --y N --w N --h N`.
-- Need to know if anything changed before reading → `kou-tty terminal status <id>` and check `has_new_content`.
+- Need a specific rectangle (e.g. one panel in htop) → `kou-tty --json terminal region <id> --x N --y N --w N --h N` and read `result.lines`.
+- Need to know if anything changed before reading → `kou-tty --json terminal status <id> | jq .result.has_new_content`.
 
 **Wait strategy?**
 
-- Shell prompt is back → `process_state == "waiting_for_input"`.
-- Command finished but produced no prompt (daemon exited, ssh closed) → `process_state == "exited"` with `exit_status` set.
-- TUI is steady-state → `process_state == "idle"` and `has_new_content == false`.
+- `kou-tty terminal status <id>` prints one of `running` / `idle` / `waiting_for_input` / `exited`.
+- Shell prompt is back → `waiting_for_input`.
+- Command finished but produced no prompt (daemon exited, ssh closed) → `exited` (use `--json` to read `exit_status`).
+- TUI is steady-state → `idle` (and `has_new_content == false` via `--json`).
 
 ## Reading the screen efficiently
 
 Three rules to keep token usage low:
 
-1. Poll `terminal status` before each `read`. Skip the read entirely if `has_new_content == false`.
-2. Prefer `terminal read --mode changes` after the first read — it returns only rows that changed since the previous read, capped at `--max-lines` (default 50, max 200).
-3. Use `terminal show --quiet` for content that will be grepped / summarised. Use `terminal read --mode full` only when coordinates matter (e.g. clicking a button at row 5, column 12).
+1. Poll `kou-tty --json terminal status <id>` before each `read` and skip if `result.has_new_content == false`.
+2. Prefer `kou-tty terminal read <id> --mode changes` after the first read — it returns only the rows that changed since the previous read, capped at `--max-lines` (default 50, max 200).
+3. Use `kou-tty terminal show <id>` (bare default = plain text) for content that will be grepped / summarised. Use `terminal read --mode full` only when coordinates matter (clicking a button at row 5, column 12).
 
 ## Sending input
 
