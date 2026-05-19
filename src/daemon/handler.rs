@@ -3,6 +3,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use crate::protocol::{ApiResponse, KeyInput, MouseAction, ReadMode, Request, Size};
+use crate::terminal::emulator::{CellPixels, DEFAULT_CELL_HEIGHT, DEFAULT_CELL_WIDTH};
 use crate::terminal::{Emulator, keys, parse_size};
 use crate::viewer::ViewerHandle;
 
@@ -52,7 +53,12 @@ fn handle_blocking(
 ) -> ApiResponse {
     match request {
         Request::Ping => ApiResponse::ok(json!({ "pong": true })),
-        Request::TerminalCreate { size, shell } => {
+        Request::TerminalCreate {
+            size,
+            shell,
+            cell_width,
+            cell_height,
+        } => {
             let (rows, cols) = match size {
                 Some(Size::Named(s)) => match parse_size(&s) {
                     Ok(v) => v,
@@ -61,10 +67,18 @@ fn handle_blocking(
                 Some(Size::Explicit { rows, cols }) => (rows, cols),
                 None => (24, 80),
             };
-            match registry.create(rows, cols, shell) {
-                Ok((id, _emulator)) => {
-                    ApiResponse::ok(json!({ "id": id, "rows": rows, "cols": cols }))
-                }
+            let cell = CellPixels {
+                width: cell_width.unwrap_or(DEFAULT_CELL_WIDTH),
+                height: cell_height.unwrap_or(DEFAULT_CELL_HEIGHT),
+            };
+            match registry.create(rows, cols, shell, cell) {
+                Ok((id, _emulator)) => ApiResponse::ok(json!({
+                    "id": id,
+                    "rows": rows,
+                    "cols": cols,
+                    "cell_width": cell.width,
+                    "cell_height": cell.height,
+                })),
                 Err(e) => ApiResponse::err("create_failed", e.to_string()),
             }
         }

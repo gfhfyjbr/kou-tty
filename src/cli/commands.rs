@@ -178,9 +178,16 @@ fn build_request(cmd: &Command) -> Result<Request> {
 
 fn build_terminal_request(cmd: &TerminalCommand) -> Result<Request> {
     match cmd {
-        TerminalCommand::Create { size, shell } => Ok(Request::TerminalCreate {
+        TerminalCommand::Create {
+            size,
+            shell,
+            cell_width,
+            cell_height,
+        } => Ok(Request::TerminalCreate {
             size: Some(Size::Named(size.clone())),
             shell: shell.clone(),
+            cell_width: *cell_width,
+            cell_height: *cell_height,
         }),
         TerminalCommand::Destroy { id, if_exists } => Ok(Request::TerminalDestroy {
             id: id.clone(),

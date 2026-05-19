@@ -15,6 +15,13 @@ use super::state::ProcessState;
 const EVENT_RING_CAPACITY: usize = 1024;
 const IDLE_THRESHOLD_MS: u128 = 500;
 
+/// Reasonable defaults for a monospace character cell (≈8x16 pixels). TUI
+/// frameworks read `pixel_width`/`pixel_height` via TIOCGWINSZ to compute
+/// font aspect ratio; leaving them at 0 makes some apps assume square cells
+/// and render at half resolution.
+pub const DEFAULT_CELL_WIDTH: u16 = 8;
+pub const DEFAULT_CELL_HEIGHT: u16 = 16;
+
 pub struct EmulatorState {
     pub grid: Grid,
     pub events: VecDeque<TerminalEvent>,
@@ -60,6 +67,7 @@ impl EmulatorState {
 
 pub struct Emulator {
     pub size: Mutex<PtySize>,
+    pub cell: Mutex<CellPixels>,
     pub state: Arc<Mutex<EmulatorState>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
@@ -67,13 +75,33 @@ pub struct Emulator {
     pub shell: String,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct CellPixels {
+    pub width: u16,
+    pub height: u16,
+}
+
+impl Default for CellPixels {
+    fn default() -> Self {
+        Self {
+            width: DEFAULT_CELL_WIDTH,
+            height: DEFAULT_CELL_HEIGHT,
+        }
+    }
+}
+
 impl Emulator {
-    pub fn spawn(rows: u16, cols: u16, shell: Option<String>) -> Result<Arc<Self>> {
+    pub fn spawn(
+        rows: u16,
+        cols: u16,
+        shell: Option<String>,
+        cell: CellPixels,
+    ) -> Result<Arc<Self>> {
         let size = PtySize {
             rows,
             cols,
-            pixel_width: 0,
-            pixel_height: 0,
+            pixel_width: cols.saturating_mul(cell.width),
+            pixel_height: rows.saturating_mul(cell.height),
         };
         let pty_system = native_pty_system();
         let pair = pty_system.openpty(size).context("failed to open pty")?;
@@ -104,6 +132,7 @@ impl Emulator {
 
         let emulator = Arc::new(Self {
             size: Mutex::new(size),
+            cell: Mutex::new(cell),
             state: Arc::clone(&state),
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
@@ -118,11 +147,12 @@ impl Emulator {
     }
 
     pub fn resize(&self, rows: u16, cols: u16) -> Result<()> {
+        let cell = *self.cell.lock().unwrap();
         let new_size = PtySize {
             rows,
             cols,
-            pixel_width: 0,
-            pixel_height: 0,
+            pixel_width: cols.saturating_mul(cell.width),
+            pixel_height: rows.saturating_mul(cell.height),
         };
         self.master
             .lock()

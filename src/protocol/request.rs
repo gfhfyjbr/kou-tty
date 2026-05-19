@@ -9,6 +9,12 @@ pub enum Request {
         size: Option<Size>,
         #[serde(default)]
         shell: Option<String>,
+        /// Pixel width of a single cell (for TIOCGWINSZ aspect-ratio hint).
+        #[serde(default)]
+        cell_width: Option<u16>,
+        /// Pixel height of a single cell.
+        #[serde(default)]
+        cell_height: Option<u16>,
     },
     TerminalDestroy {
         id: String,

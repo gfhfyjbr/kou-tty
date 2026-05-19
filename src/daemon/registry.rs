@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use dashmap::DashMap;
 
+use crate::terminal::emulator::CellPixels;
 use crate::terminal::{Emulator, TerminalId};
 
 pub struct Registry {
@@ -21,8 +22,9 @@ impl Registry {
         rows: u16,
         cols: u16,
         shell: Option<String>,
+        cell: CellPixels,
     ) -> Result<(TerminalId, Arc<Emulator>)> {
-        let emulator = Emulator::spawn(rows, cols, shell)?;
+        let emulator = Emulator::spawn(rows, cols, shell, cell)?;
         let id = self.fresh_id();
         self.inner.insert(id.clone(), Arc::clone(&emulator));
         Ok((id, emulator))

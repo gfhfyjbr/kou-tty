@@ -109,6 +109,13 @@ kou-tty --json terminal create   # full JSON envelope")]
         /// Shell binary path. Defaults to $SHELL or /bin/bash.
         #[arg(long)]
         shell: Option<String>,
+        /// Pixel width of a single cell (default 8). TUI apps read this via
+        /// TIOCGWINSZ to compute aspect ratio.
+        #[arg(long)]
+        cell_width: Option<u16>,
+        /// Pixel height of a single cell (default 16).
+        #[arg(long)]
+        cell_height: Option<u16>,
     },
 
     /// Destroy a terminal by id.
