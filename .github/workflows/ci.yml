@@ -1,0 +1,76 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - run: cargo +nightly fmt --all -- --check
+
+  build:
+    name: build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - run: cargo test --release --locked
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: lint install.sh
+        run: shellcheck -e SC1091,SC2002,SC2155,SC2207,SC2317,SC2034,SC2287,SC2188,SC2329 install.sh
+
+  skill-validate:
+    name: skill validator
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pyyaml
+      - name: validate skill
+        run: |
+          python3 - <<'PY'
+          import re, sys, yaml, pathlib
+          skill = pathlib.Path("skills/driving-terminal/SKILL.md")
+          content = skill.read_text()
+          if not content.startswith("---"):
+              sys.exit("missing frontmatter")
+          fm_match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
+          if not fm_match:
+              sys.exit("invalid frontmatter")
+          fm = yaml.safe_load(fm_match.group(1))
+          assert "name" in fm and "description" in fm, "name/description missing"
+          assert re.match(r"^[a-z0-9-]+$", fm["name"]), f"bad name: {fm['name']}"
+          assert len(fm["name"]) <= 64, "name too long"
+          assert len(fm["description"]) <= 1024, "description too long"
+          assert "anthropic" not in fm["name"] and "claude" not in fm["name"], "reserved word in name"
+          body_lines = content.splitlines()[fm_match.group(0).count("\n") + 1 :]
+          assert len(body_lines) <= 500, f"SKILL.md body too long: {len(body_lines)} lines"
+          print(f"OK: {fm['name']} ({len(fm['description'])} chars, {len(body_lines)} body lines)")
+          PY

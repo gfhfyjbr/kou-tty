@@ -1,0 +1,134 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. v0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: kou-tty-macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset: kou-tty-macos-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: kou-tty-linux-x64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            asset: kou-tty-linux-arm64
+            cross: true
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: kou-tty-windows-x64.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: install cross
+        if: matrix.cross == true
+        run: cargo install cross --locked --version 0.2.5
+
+      - name: build
+        shell: bash
+        env:
+          CROSS: ${{ matrix.cross }}
+        run: |
+          set -euo pipefail
+          if [ "${CROSS:-false}" = "true" ]; then
+            cross build --release --locked --target "${{ matrix.target }}"
+          else
+            cargo build --release --locked --target "${{ matrix.target }}"
+          fi
+
+      - name: stage artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="target/${{ matrix.target }}/release/kou-tty"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            src="${src}.exe"
+          fi
+          cp "$src" "${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: build skill bundle tarball
+        run: |
+          tar czf dist/skill-bundle.tar.gz -C skills .
+          ls -la dist/
+
+      - name: bundle install.sh with embedded skill
+        run: |
+          chmod +x install.sh
+          ./install.sh bundle
+          cp install.sh dist/install.sh
+          chmod +x dist/install.sh
+
+      - name: resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --generate-notes \
+              dist/kou-tty-* dist/install.sh dist/skill-bundle.tar.gz
+          else
+            gh release upload "$TAG" \
+              dist/kou-tty-* dist/install.sh dist/skill-bundle.tar.gz \
+              --clobber
+          fi
