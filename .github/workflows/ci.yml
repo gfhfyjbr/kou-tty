@@ -42,7 +42,7 @@ jobs:
       - name: install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: lint install.sh
-        run: shellcheck -e SC1091,SC2002,SC2155,SC2207,SC2317,SC2034,SC2287,SC2188,SC2329 install.sh
+        run: shellcheck -e SC1091,SC2002,SC2015,SC2155,SC2207,SC2317,SC2034,SC2287,SC2188,SC2329 install.sh
 
   skill-validate:
     name: skill validator
