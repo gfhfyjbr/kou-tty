@@ -256,4 +256,117 @@ impl Grid {
         }
         out
     }
+
+    pub fn row_text_ansi(&self, row: u16) -> String {
+        let Some(line) = self.cells.get(row as usize) else {
+            return String::new();
+        };
+        let trim_len = line
+            .iter()
+            .rposition(|c| !cell_is_blank(c))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        if trim_len == 0 {
+            return String::new();
+        }
+        let mut out = String::new();
+        let mut state = StyleState::default();
+        for cell in line.iter().take(trim_len) {
+            state.apply(cell, &mut out);
+            out.push(cell.ch);
+        }
+        if state.dirty {
+            out.push_str("\x1b[0m");
+        }
+        out
+    }
+
+    pub fn plain_text_ansi(&self) -> String {
+        let mut out = String::new();
+        for row in 0..self.rows {
+            out.push_str(&self.row_text_ansi(row));
+            out.push('\n');
+        }
+        out
+    }
+}
+
+fn cell_is_blank(cell: &Cell) -> bool {
+    cell.ch == ' '
+        && matches!(cell.fg, super::cell::Color::Default)
+        && matches!(cell.bg, super::cell::Color::Default)
+        && cell.attrs == super::cell::CellAttrs::default()
+}
+
+#[derive(Default)]
+struct StyleState {
+    last: Option<(
+        super::cell::Color,
+        super::cell::Color,
+        super::cell::CellAttrs,
+    )>,
+    dirty: bool,
+}
+
+impl StyleState {
+    fn apply(&mut self, cell: &Cell, out: &mut String) {
+        let triple = (cell.fg, cell.bg, cell.attrs);
+        if self.last == Some(triple) {
+            return;
+        }
+        out.push_str("\x1b[0m");
+        let mut codes: Vec<String> = Vec::new();
+        if cell.attrs.bold {
+            codes.push("1".to_owned());
+        }
+        if cell.attrs.italic {
+            codes.push("3".to_owned());
+        }
+        if cell.attrs.underline {
+            codes.push("4".to_owned());
+        }
+        if cell.attrs.inverse {
+            codes.push("7".to_owned());
+        }
+        if cell.attrs.strikethrough {
+            codes.push("9".to_owned());
+        }
+        push_color(&mut codes, cell.fg, ColorKind::Foreground);
+        push_color(&mut codes, cell.bg, ColorKind::Background);
+        if !codes.is_empty() {
+            out.push_str("\x1b[");
+            out.push_str(&codes.join(";"));
+            out.push('m');
+        }
+        self.last = Some(triple);
+        self.dirty = true;
+    }
+}
+
+enum ColorKind {
+    Foreground,
+    Background,
+}
+
+fn push_color(codes: &mut Vec<String>, color: super::cell::Color, kind: ColorKind) {
+    use super::cell::Color;
+    let (base, ext) = match kind {
+        ColorKind::Foreground => (30, 38),
+        ColorKind::Background => (40, 48),
+    };
+    match color {
+        Color::Default => {}
+        Color::Indexed(i) => {
+            if i < 8 {
+                codes.push(format!("{}", base + i as u16));
+            } else if i < 16 {
+                codes.push(format!("{}", base + 60 + (i - 8) as u16));
+            } else {
+                codes.push(format!("{};5;{}", ext, i));
+            }
+        }
+        Color::Rgb(r, g, b) => {
+            codes.push(format!("{};2;{};{};{}", ext, r, g, b));
+        }
+    }
 }

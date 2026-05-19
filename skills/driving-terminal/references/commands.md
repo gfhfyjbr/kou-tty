@@ -158,38 +158,37 @@ Coordinates are 0-indexed. SGR-1006 encoding is emitted; the target program must
 ## `terminal read`
 
 ```bash
-kou-tty terminal read <ID> [--mode full|changes|plain] [--max-lines N]
-kou-tty terminal read <ID> --mode full   # bare text (still has the ruler)
+kou-tty terminal read <ID> [--mode full|changes|plain] [--max-lines N] [--color always|auto|never]
 ```
 
-- `full` (default): every row, with a column ruler header and row numbers.
+- `full` (default): every row, with a column header and row numbers.
 - `changes`: only rows that changed since the last read. Capped at `--max-lines` (default 50, max 200).
 - `plain`: every row, no overlay.
+- `--color`: re-emit SGR escape sequences captured from the PTY. Default `auto` = on when stdout is a TTY.
 
 ## `terminal show`
 
 ```bash
-kou-tty terminal show <ID>
-kou-tty terminal show <ID>   # bare plain text
+kou-tty terminal show <ID> [--color always|auto|never]
 ```
 
-Plain text dump of the screen, no coordinate overlay. Trailing blank rows are preserved as empty lines.
+Plain text dump of the screen, no coordinate overlay. Trailing blank rows are preserved as empty lines. `--color always` re-emits ANSI colour codes so piping into a real terminal or `less -R` reproduces the original colours.
 
 ## `terminal rows`
 
 ```bash
-kou-tty terminal rows <ID> <FROM> <TO>
+kou-tty terminal rows <ID> <FROM> <TO> [--color always|auto|never]
 ```
 
-Read rows `[FROM..=TO]` as plain text. 0-indexed.
+Read rows `[FROM..=TO]`. 0-indexed.
 
 ## `terminal region`
 
 ```bash
-kou-tty terminal region <ID> --x <COL> --y <ROW> --w <WIDTH> --h <HEIGHT>
+kou-tty terminal region <ID> --x <COL> --y <ROW> --w <WIDTH> --h <HEIGHT> [--color always|auto|never]
 ```
 
-Returns `lines: [string]`.
+Returns `lines: [string]`. With `--color always`, each line carries the SGR codes that were active on those cells.
 
 ## `terminal status`
 
@@ -211,7 +210,7 @@ Drains up to `N` events. Types: `screen_changed`, `process_state_changed`, `wait
 ## `terminal select`
 
 ```bash
-kou-tty terminal select <ID> --from-row R --from-col C --to-row R --to-col C
+kou-tty terminal select <ID> --from-row R --from-col C --to-row R --to-col C [--color always|auto|never]
 ```
 
 Returns the text between the two points. Pure read.

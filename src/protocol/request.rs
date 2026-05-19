@@ -35,14 +35,20 @@ pub enum Request {
         mode: ReadMode,
         #[serde(default)]
         max_lines: Option<u16>,
+        #[serde(default)]
+        color: bool,
     },
     TerminalShowScreen {
         id: String,
+        #[serde(default)]
+        color: bool,
     },
     TerminalReadRows {
         id: String,
         from: u16,
         to: u16,
+        #[serde(default)]
+        color: bool,
     },
     TerminalReadRegion {
         id: String,
@@ -50,6 +56,8 @@ pub enum Request {
         y: u16,
         w: u16,
         h: u16,
+        #[serde(default)]
+        color: bool,
     },
     TerminalStatus {
         id: String,
@@ -65,6 +73,8 @@ pub enum Request {
         from_col: u16,
         to_row: u16,
         to_col: u16,
+        #[serde(default)]
+        color: bool,
     },
     TerminalScroll {
         id: String,

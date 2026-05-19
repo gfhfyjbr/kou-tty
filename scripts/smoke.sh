@@ -77,6 +77,22 @@ case "$TEXT" in
   *) fail "marker not found" ;;
 esac
 
+step "terminal show --color always re-emits SGR"
+KT terminal send-keys "$ID" '[{"text":"printf \"\\x1b[31mRED\\x1b[0m\\n\""},{"key":"Enter"}]' > /dev/null
+sleep 0.2
+COL=$(KT terminal show "$ID" --color always)
+case "$COL" in
+  *$'\x1b'\[*) pass "ANSI escape present" ;;
+  *) fail "no SGR codes in --color always output" ;;
+esac
+
+step "terminal show --color never strips SGR"
+PLAIN=$(KT terminal show "$ID" --color never)
+case "$PLAIN" in
+  *$'\x1b'\[*) fail "unexpected SGR in --color never" ;;
+  *) pass "plain text only" ;;
+esac
+
 step "terminal status (bare → process_state)"
 STATE=$(KT terminal status "$ID")
 case "$STATE" in

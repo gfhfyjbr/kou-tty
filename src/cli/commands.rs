@@ -7,7 +7,15 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use crate::daemon::{DaemonClient, default_socket_path, run as run_daemon};
 use crate::protocol::{ApiResponse, KeyInput, MouseAction, ReadMode, Request, Size, exit_code_for};
 
-use super::{Cli, Command, TerminalCommand, ViewerCommand};
+use super::{Cli, ColorWhen, Command, TerminalCommand, ViewerCommand};
+
+fn resolve_color(when: ColorWhen) -> bool {
+    match when {
+        ColorWhen::Always => true,
+        ColorWhen::Never => false,
+        ColorWhen::Auto => std::io::IsTerminal::is_terminal(&std::io::stdout()),
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 enum OutputMode {
@@ -244,23 +252,42 @@ fn build_terminal_request(cmd: &TerminalCommand) -> Result<Request> {
             id,
             mode,
             max_lines,
+            color,
         } => Ok(Request::TerminalReadScreen {
             id: id.clone(),
             mode: parse_read_mode(mode)?,
             max_lines: *max_lines,
+            color: resolve_color(*color),
         }),
-        TerminalCommand::Show { id } => Ok(Request::TerminalShowScreen { id: id.clone() }),
-        TerminalCommand::Rows { id, from, to } => Ok(Request::TerminalReadRows {
+        TerminalCommand::Show { id, color } => Ok(Request::TerminalShowScreen {
+            id: id.clone(),
+            color: resolve_color(*color),
+        }),
+        TerminalCommand::Rows {
+            id,
+            from,
+            to,
+            color,
+        } => Ok(Request::TerminalReadRows {
             id: id.clone(),
             from: *from,
             to: *to,
+            color: resolve_color(*color),
         }),
-        TerminalCommand::Region { id, x, y, w, h } => Ok(Request::TerminalReadRegion {
+        TerminalCommand::Region {
+            id,
+            x,
+            y,
+            w,
+            h,
+            color,
+        } => Ok(Request::TerminalReadRegion {
             id: id.clone(),
             x: *x,
             y: *y,
             w: *w,
             h: *h,
+            color: resolve_color(*color),
         }),
         TerminalCommand::Status { id } => Ok(Request::TerminalStatus { id: id.clone() }),
         TerminalCommand::Events { id, max } => Ok(Request::TerminalPollEvents {
@@ -273,12 +300,14 @@ fn build_terminal_request(cmd: &TerminalCommand) -> Result<Request> {
             from_col,
             to_row,
             to_col,
+            color,
         } => Ok(Request::TerminalSelect {
             id: id.clone(),
             from_row: *from_row,
             from_col: *from_col,
             to_row: *to_row,
             to_col: *to_col,
+            color: resolve_color(*color),
         }),
         TerminalCommand::Scroll { id, by } => Ok(Request::TerminalScroll {
             id: id.clone(),

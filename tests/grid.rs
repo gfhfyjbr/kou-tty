@@ -100,3 +100,49 @@ fn plain_text_contains_all_rows_separated_by_newline() {
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines, ["ab", "cd", ""]);
 }
+
+#[test]
+fn row_text_ansi_emits_sgr_for_styled_cells() {
+    use kou_tty::terminal::{CellAttrs, Color};
+
+    let mut grid = Grid::new(1, 8);
+    grid.current_fg = Color::Indexed(1);
+    grid.put_char('R');
+    grid.current_fg = Color::Indexed(2);
+    grid.current_attrs = CellAttrs {
+        bold: true,
+        ..Default::default()
+    };
+    grid.put_char('G');
+    grid.put_char('G');
+
+    let ansi = grid.row_text_ansi(0);
+    assert!(ansi.contains("\x1b[31m"), "missing red SGR in {ansi:?}");
+    assert!(ansi.contains("32"), "missing green SGR in {ansi:?}");
+    assert!(ansi.contains("1;"), "missing bold SGR in {ansi:?}");
+    assert!(ansi.ends_with("\x1b[0m"), "missing reset at end: {ansi:?}");
+    assert!(ansi.contains('R'));
+    assert!(ansi.contains('G'));
+}
+
+#[test]
+fn row_text_ansi_skips_redundant_sgr_for_identical_runs() {
+    use kou_tty::terminal::Color;
+
+    let mut grid = Grid::new(1, 4);
+    grid.current_fg = Color::Indexed(1);
+    for ch in "RRRR".chars() {
+        grid.put_char(ch);
+    }
+    let ansi = grid.row_text_ansi(0);
+    let sgr_count = ansi.matches("\x1b[0m").count();
+    // One opening reset + one closing reset is expected.
+    assert!(sgr_count >= 1 && sgr_count <= 2, "got {sgr_count}");
+    assert!(ansi.ends_with("\x1b[0m"));
+}
+
+#[test]
+fn row_text_ansi_returns_empty_for_blank_row() {
+    let grid = Grid::new(2, 8);
+    assert_eq!(grid.row_text_ansi(0), "");
+}

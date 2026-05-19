@@ -97,6 +97,10 @@ Three rules to keep token usage low:
 2. Prefer `kou-tty terminal read <id> --mode changes` after the first read — it returns only the rows that changed since the previous read, capped at `--max-lines` (default 50, max 200).
 3. Use `kou-tty terminal show <id>` (bare default = plain text) for content that will be grepped / summarised. Use `terminal read --mode full` only when coordinates matter (clicking a button at row 5, column 12).
 
+## Colours
+
+`show`, `read`, `rows`, `region`, and `select` accept `--color always|auto|never` (default `auto`). When colour is on, the captured SGR escape sequences are re-emitted, so piping the output into a real terminal or `less -R` shows the same colours the program drew. Use `--color never` for grep / summarisation, `--color always` for visual inspection, and the default `auto` to let stdout-is-a-TTY decide.
+
 ## Sending input
 
 `kou-tty terminal send-keys <id> '<json-array>'` accepts a mix of text and named keys:

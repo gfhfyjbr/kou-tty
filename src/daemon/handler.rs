@@ -142,25 +142,46 @@ fn handle_blocking(
             id,
             mode,
             max_lines,
-        } => with_term(&registry, &id, |e| read_screen(&e, mode, max_lines)),
-        Request::TerminalShowScreen { id } => with_term(&registry, &id, |e| {
+            color,
+        } => with_term(&registry, &id, |e| read_screen(&e, mode, max_lines, color)),
+        Request::TerminalShowScreen { id, color } => with_term(&registry, &id, |e| {
             let mut st = e.state.lock().unwrap();
-            let text = st.grid.plain_text();
+            let text = if color {
+                st.grid.plain_text_ansi()
+            } else {
+                st.grid.plain_text()
+            };
             st.mark_read();
             ApiResponse::ok(json!({ "text": text }))
         }),
-        Request::TerminalReadRows { id, from, to } => with_term(&registry, &id, |e| {
+        Request::TerminalReadRows {
+            id,
+            from,
+            to,
+            color,
+        } => with_term(&registry, &id, |e| {
             let st = e.state.lock().unwrap();
             let from = from.min(st.grid.rows.saturating_sub(1));
             let to = to.min(st.grid.rows.saturating_sub(1));
             let mut out = String::new();
             for r in from..=to {
-                out.push_str(&st.grid.row_text(r));
+                if color {
+                    out.push_str(&st.grid.row_text_ansi(r));
+                } else {
+                    out.push_str(&st.grid.row_text(r));
+                }
                 out.push('\n');
             }
             ApiResponse::ok(json!({ "text": out, "from": from, "to": to }))
         }),
-        Request::TerminalReadRegion { id, x, y, w, h } => with_term(&registry, &id, |e| {
+        Request::TerminalReadRegion {
+            id,
+            x,
+            y,
+            w,
+            h,
+            color,
+        } => with_term(&registry, &id, |e| {
             let st = e.state.lock().unwrap();
             let mut lines: Vec<String> = Vec::new();
             for dy in 0..h {
@@ -168,18 +189,21 @@ fn handle_blocking(
                 if r >= st.grid.rows {
                     break;
                 }
-                let row_text: String = st
-                    .grid
-                    .cells
-                    .get(r as usize)
-                    .map(|line| {
-                        line.iter()
-                            .skip(x as usize)
-                            .take(w as usize)
-                            .map(|c| c.ch)
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                let row_text = if color {
+                    render_region_ansi(&st.grid, r, x, w)
+                } else {
+                    st.grid
+                        .cells
+                        .get(r as usize)
+                        .map(|line| {
+                            line.iter()
+                                .skip(x as usize)
+                                .take(w as usize)
+                                .map(|c| c.ch)
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
                 lines.push(row_text);
             }
             ApiResponse::ok(json!({ "lines": lines }))
@@ -212,24 +236,32 @@ fn handle_blocking(
             from_col,
             to_row,
             to_col,
+            color,
         } => with_term(&registry, &id, |e| {
             let st = e.state.lock().unwrap();
             let mut out = String::new();
             for r in from_row..=to_row.min(st.grid.rows.saturating_sub(1)) {
-                let row_chars: Vec<char> = st
-                    .grid
-                    .cells
-                    .get(r as usize)
-                    .map(|line| line.iter().map(|c| c.ch).collect())
-                    .unwrap_or_default();
                 let start = if r == from_row { from_col as usize } else { 0 };
+                let row_cells = st.grid.cells.get(r as usize);
+                let row_len = row_cells.map(|line| line.len()).unwrap_or(0);
                 let end = if r == to_row {
-                    (to_col as usize + 1).min(row_chars.len())
+                    (to_col as usize + 1).min(row_len)
                 } else {
-                    row_chars.len()
+                    row_len
                 };
                 if start < end {
-                    out.extend(&row_chars[start..end]);
+                    if color {
+                        out.push_str(&render_region_ansi(
+                            &st.grid,
+                            r,
+                            start as u16,
+                            (end - start) as u16,
+                        ));
+                    } else if let Some(line) = row_cells {
+                        for cell in line.iter().skip(start).take(end - start) {
+                            out.push(cell.ch);
+                        }
+                    }
                 }
                 if r != to_row {
                     out.push('\n');
@@ -282,18 +314,27 @@ where
     }
 }
 
-fn read_screen(e: &Arc<Emulator>, mode: ReadMode, max_lines: Option<u16>) -> ApiResponse {
+fn read_screen(
+    e: &Arc<Emulator>,
+    mode: ReadMode,
+    max_lines: Option<u16>,
+    color: bool,
+) -> ApiResponse {
     let mut st = e.state.lock().unwrap();
     let size = *e.size.lock().unwrap();
     let cap = max_lines.unwrap_or(200).min(200);
     match mode {
         ReadMode::Plain => {
-            let text = st.grid.plain_text();
+            let text = if color {
+                st.grid.plain_text_ansi()
+            } else {
+                st.grid.plain_text()
+            };
             st.mark_read();
             ApiResponse::ok(json!({ "text": text, "rows": size.rows, "cols": size.cols }))
         }
         ReadMode::Full => {
-            let text = render_with_coords(&st.grid, None);
+            let text = render_with_coords(&st.grid, None, color);
             st.mark_read();
             ApiResponse::ok(json!({
                 "text": text,
@@ -305,7 +346,7 @@ fn read_screen(e: &Arc<Emulator>, mode: ReadMode, max_lines: Option<u16>) -> Api
         ReadMode::Changes => {
             let dirty = st.grid.take_dirty();
             let limited: Vec<u16> = dirty.into_iter().take(cap as usize).collect();
-            let text = render_with_coords(&st.grid, Some(&limited));
+            let text = render_with_coords(&st.grid, Some(&limited), color);
             st.mark_read();
             ApiResponse::ok(json!({
                 "text": text,
@@ -316,9 +357,12 @@ fn read_screen(e: &Arc<Emulator>, mode: ReadMode, max_lines: Option<u16>) -> Api
     }
 }
 
-fn render_with_coords(grid: &crate::terminal::Grid, only_rows: Option<&[u16]>) -> String {
+fn render_with_coords(
+    grid: &crate::terminal::Grid,
+    only_rows: Option<&[u16]>,
+    color: bool,
+) -> String {
     let mut out = String::new();
-    // header
     out.push_str("     ");
     for c in 0..grid.cols {
         out.push(((c % 10) as u8 + b'0') as char);
@@ -333,10 +377,107 @@ fn render_with_coords(grid: &crate::terminal::Grid, only_rows: Option<&[u16]>) -
             continue;
         }
         out.push_str(&format!("{r:>3}: "));
-        out.push_str(&grid.row_text(r));
+        if color {
+            out.push_str(&grid.row_text_ansi(r));
+        } else {
+            out.push_str(&grid.row_text(r));
+        }
         out.push('\n');
     }
     out
+}
+
+fn render_region_ansi(grid: &crate::terminal::Grid, row: u16, x: u16, w: u16) -> String {
+    let Some(line) = grid.cells.get(row as usize) else {
+        return String::new();
+    };
+    let mut out = String::new();
+    let mut state = ansi_runner::StyleState::default();
+    for cell in line.iter().skip(x as usize).take(w as usize) {
+        state.apply(cell, &mut out);
+        out.push(cell.ch);
+    }
+    if state.dirty {
+        out.push_str("\x1b[0m");
+    }
+    out
+}
+
+mod ansi_runner {
+    use crate::terminal::Cell;
+
+    #[derive(Default)]
+    pub struct StyleState {
+        last: Option<(
+            crate::terminal::Color,
+            crate::terminal::Color,
+            crate::terminal::CellAttrs,
+        )>,
+        pub dirty: bool,
+    }
+
+    impl StyleState {
+        pub fn apply(&mut self, cell: &Cell, out: &mut String) {
+            let triple = (cell.fg, cell.bg, cell.attrs);
+            if self.last == Some(triple) {
+                return;
+            }
+            out.push_str("\x1b[0m");
+            let mut codes: Vec<String> = Vec::new();
+            if cell.attrs.bold {
+                codes.push("1".to_owned());
+            }
+            if cell.attrs.italic {
+                codes.push("3".to_owned());
+            }
+            if cell.attrs.underline {
+                codes.push("4".to_owned());
+            }
+            if cell.attrs.inverse {
+                codes.push("7".to_owned());
+            }
+            if cell.attrs.strikethrough {
+                codes.push("9".to_owned());
+            }
+            push_color(&mut codes, cell.fg, ColorKind::Foreground);
+            push_color(&mut codes, cell.bg, ColorKind::Background);
+            if !codes.is_empty() {
+                out.push_str("\x1b[");
+                out.push_str(&codes.join(";"));
+                out.push('m');
+            }
+            self.last = Some(triple);
+            self.dirty = true;
+        }
+    }
+
+    enum ColorKind {
+        Foreground,
+        Background,
+    }
+
+    fn push_color(codes: &mut Vec<String>, color: crate::terminal::Color, kind: ColorKind) {
+        use crate::terminal::Color;
+        let (base, ext) = match kind {
+            ColorKind::Foreground => (30u16, 38u16),
+            ColorKind::Background => (40u16, 48u16),
+        };
+        match color {
+            Color::Default => {}
+            Color::Indexed(i) => {
+                if i < 8 {
+                    codes.push(format!("{}", base + i as u16));
+                } else if i < 16 {
+                    codes.push(format!("{}", base + 60 + (i - 8) as u16));
+                } else {
+                    codes.push(format!("{};5;{}", ext, i));
+                }
+            }
+            Color::Rgb(r, g, b) => {
+                codes.push(format!("{};2;{};{};{}", ext, r, g, b));
+            }
+        }
+    }
 }
 
 fn mouse_to_bytes(action: &MouseAction) -> Vec<Vec<u8>> {

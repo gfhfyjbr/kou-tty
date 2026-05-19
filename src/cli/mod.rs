@@ -2,7 +2,16 @@ pub mod commands;
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+#[clap(rename_all = "lower")]
+pub enum ColorWhen {
+    Always,
+    #[default]
+    Auto,
+    Never,
+}
 
 const LONG_ABOUT: &str = "\
 kou-tty is a headless terminal emulator. It spawns a PTY for each terminal,
@@ -165,20 +174,36 @@ kou-tty terminal send-keys a0 '[{\"key\":\"Escape\"},{\"text\":\":q!\"},{\"key\"
     #[command(long_about = "Read modes:\n  \
 full     every row with a column ruler\n  \
 changes  only rows that changed since the last read (token-efficient)\n  \
-plain    every row, no overlay")]
+plain    every row, no overlay\n\n\
+Use --color always|auto|never to re-emit the SGR escape sequences captured\n\
+from the PTY. Default is auto (color when stdout is a TTY).")]
     Read {
         id: String,
         #[arg(long, default_value = "full")]
         mode: String,
         #[arg(long)]
         max_lines: Option<u16>,
+        /// Re-emit ANSI colour codes captured from the PTY.
+        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
+        color: ColorWhen,
     },
 
     /// Read the screen as plain text without coordinates.
-    Show { id: String },
+    Show {
+        id: String,
+        /// Re-emit ANSI colour codes captured from the PTY.
+        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
+        color: ColorWhen,
+    },
 
     /// Read a range of rows.
-    Rows { id: String, from: u16, to: u16 },
+    Rows {
+        id: String,
+        from: u16,
+        to: u16,
+        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
+        color: ColorWhen,
+    },
 
     /// Read a rectangular region.
     Region {
@@ -191,6 +216,8 @@ plain    every row, no overlay")]
         w: u16,
         #[arg(long)]
         h: u16,
+        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
+        color: ColorWhen,
     },
 
     /// Get terminal status (process state, has_new_content, cursor, ...).
@@ -214,6 +241,8 @@ plain    every row, no overlay")]
         to_row: u16,
         #[arg(long)]
         to_col: u16,
+        #[arg(long, value_enum, default_value_t = ColorWhen::Auto)]
+        color: ColorWhen,
     },
 
     /// Scroll viewport by N rows (positive = down).
